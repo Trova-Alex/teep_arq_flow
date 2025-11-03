@@ -417,7 +417,7 @@
                         <select id="peripheralInterface">
                             <option value="">-- Selecionar --</option>
                             <option value="FTP">TCP/IP Serial</option>
-                            <option value="FTP">SFTP</option>
+                            <option value="FTP">FTP</option>
                             <option value="SCP">SCP</option>
                         </select>
                     </div>
@@ -636,21 +636,78 @@
 
         function insertDefaultConnectionParams() {
             const ta = document.getElementById('peripheralJsonConnectionParams');
-            if (!ta) return;
+            const ifaceEl = document.getElementById('peripheralInterface');
+            if (!ta || !ifaceEl) return;
+
             const existing = ta.value.trim();
-            if (existing) {
-                if (!confirm('O campo já contém texto. Deseja substituir pelo JSON padrão?')) return;
+            if (existing && !confirm('O campo já contém texto. Deseja substituir pelo JSON padrão para a interface selecionada?')) return;
+
+            const val = (ifaceEl.value || '').toUpperCase();
+            const text = (ifaceEl.options[ifaceEl.selectedIndex]?.text || '').toUpperCase();
+            const key = `${val} ${text}`;
+
+            let defaults;
+
+            if (/SFTP/.test(key)) {
+                defaults = {
+                    host: "192.168.0.7",
+                    port: 22,
+                    user: "user",
+                    password: "pass",
+                    private_key_path: "",
+                    timeout: 30,
+                    protocol: "sftp"
+                };
+            } else if (/SCP/.test(key)) {
+                defaults = {
+                    host: "192.168.0.7",
+                    port: 22,
+                    user: "user",
+                    password: "pass",
+                    timeout: 30,
+                    protocol: "scp"
+                };
+            } else if (/FTP/.test(key) && !/SFTP/.test(key)) {
+                defaults = {
+                    host: "192.168.0.7",
+                    port: 21,
+                    user: "anonymous",
+                    password: "",
+                    passive: true,
+                    timeout: 30,
+                    protocol: "ftp"
+                };
+            } else if (/TCP|SERIAL|RS232|RS485/.test(key) || /TCP\/IP/.test(key)) {
+                defaults = {
+                    host: "192.168.0.7",
+                    port: 8234,
+                    timeout: 3,
+                    baudrate: 115200,
+                    parity: "none",
+                    stopbits: 1,
+                    protocol: "tcp"
+                };
+            } else if (/DNC/.test(key)) {
+                defaults = {
+                    host: "192.168.0.7",
+                    port: 8234,
+                    timeout: 3,
+                    model: "dnc"
+                };
+            } else {
+                // generic fallback
+                defaults = {
+                    host: "192.168.0.7",
+                    port: 8234,
+                    timeout: 3,
+                    model: "generic"
+                };
             }
-            const defaults = {
-                host: "192.168.0.7",
-                port: 8234,
-                timeout: 3,
-                model: "dnc"
-            };
+
             try {
                 ta.value = JSON.stringify(defaults, null, 2);
             } catch (e) {
-                ta.value = '{"host":"192.168.0.7","port":8234,"timeout":3,"model":"dnc"}';
+                ta.value = '{"host":"192.168.0.7","port":8234,"timeout":3}';
             }
         }
 
