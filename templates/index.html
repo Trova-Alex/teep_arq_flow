@@ -590,7 +590,7 @@
                             if (ch !== undefined) {
                                 const k = `${itype}_${ch}`;
                                 obj[k] = {
-                                    index: String(idx ?? ''),
+                                    index: parseInt(idx ?? 0),
                                     notification_type: parseInt(item.notification_type ?? 0, 10) || 0,
                                     interval: item.interval ?? interval,
                                     path: item.path ?? undefined

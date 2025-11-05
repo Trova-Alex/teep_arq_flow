@@ -1,4 +1,3 @@
-# python
 from __future__ import annotations
 import json
 import logging
@@ -6,8 +5,11 @@ from datetime import datetime
 from typing import Dict, Any, TYPE_CHECKING
 import pika
 import time
+import os
 import helpers.helper as helper
-from ftp_manager import FTPManager
+from ftp_manager import FTPManager, get_file_tree
+from helpers.enums import ActionTable
+from peripheral.generic_file_transfer import GenericFileTransfer
 
 if TYPE_CHECKING:
     from setup_config import ConfigManager  # only for type checking to avoid circular imports
@@ -66,149 +68,57 @@ class RabbitMQService:
 
     def declare_queues(self):
         """Declara as filas necessárias"""
-        try:
-            peripherals = self.config_manager.get_peripherals()
+        peripherals = self.config_manager.get_peripherals()
 
-            # allow this consumer to receive only one unacked message at a time
-            # set QoS once for the channel
-            self.channel.basic_qos(prefetch_count=1)
+        # allow this consumer to receive only one unacked message at a time
+        # set QoS once for the channel
+        self.channel.basic_qos(prefetch_count=1)
 
-            for peripheral in peripherals:
-                json_channel_to_virtual_index = peripheral.get('json_channel_to_virtual_index', {})
-                _index = helper.has_key_with_substring(json_channel_to_virtual_index, 'index')
-                print(f"_index: {_index}")
+        for peripheral in peripherals:
 
-                recv_queue_name = f"recv_queue_index_{_index}"
-                send_queue_name = f"send_queue_index_{_index}"
-                self.channel.queue_declare(queue=recv_queue_name, durable=False)
-                self.channel.queue_declare(queue=send_queue_name, durable=False)
+            json_channel_to_virtual_index = peripheral.get('json_channel_to_virtual_index', {})
+            json_connection_params = peripheral.get('json_connection_params', {})
 
-                if recv_queue_name not in self.consumed_queues:
-                    self.channel.basic_consume(
-                        queue=recv_queue_name,
-                        on_message_callback=self.process_message
-                    )
-                    self.consumed_queues.add(recv_queue_name)
-                    logger.info(f"consuming queue: {recv_queue_name}")
+            logger.info(f"Peripheral params: {json_connection_params}")
+            logger.info(f"Virtual Indexes: {json_channel_to_virtual_index}")
 
-                logger.info(f"Filas declaradas: {recv_queue_name} - {send_queue_name}")
-        except Exception as e:
-            logger.error(f"Erro ao declarar filas: {e}")
+            _peripheral = GenericFileTransfer(json_connection_params,
+                                              json_channel_to_virtual_index,
+                                              self.send_message,
+                                              self.config_manager)
 
-    def send_message(self, message: Dict[str, Any]):
+            _index = _peripheral.get_index()
+            if _index is None:
+                logger.error(f"Peripheral doesn't have an index...")
+                raise ValueError("Peripheral index is required for queue declaration")
+
+            recv_queue_name = f"recv_queue_index_{_index}"
+            send_queue_name = f"send_queue_index_{_index}"
+            self.channel.queue_declare(queue=recv_queue_name, durable=False)
+            self.channel.queue_declare(queue=send_queue_name, durable=False)
+
+            if recv_queue_name not in self.consumed_queues:
+                self.channel.basic_consume(
+                    queue=recv_queue_name,
+                    on_message_callback=_peripheral.process_message
+                )
+                self.consumed_queues.add(recv_queue_name)
+                logger.info(f"consuming queue: {recv_queue_name}")
+
+            logger.info(f"Filas declaradas: {recv_queue_name} - {send_queue_name}")
+
+    def send_message(self, message: Dict[str, Any], routing_key: str = None):
         """Envia uma mensagem para a fila de saída"""
         try:
             self.channel.basic_publish(
                 exchange='',
-                routing_key=self.rabbitmq_config['queue_out'],
+                routing_key=routing_key,
                 body=json.dumps(message),
                 properties=pika.BasicProperties(delivery_mode=2)
             )
-            logger.info(f"Mensagem enviada: {message.get('type', 'unknown')}")
+            logger.info(f"Mensagem enviada: {message.get('command', 'unknown')}")
         except Exception as e:
             logger.error(f"Erro ao enviar mensagem: {e}")
-
-    def process_message(self, ch, method, properties, body):
-        """Processa mensagens recebidas"""
-        try:
-            message = json.loads(body)
-            command = message.get('command')
-
-            logger.info(f"Mensagem recebida: {command}")
-
-            response = {
-                'command': command,
-                'status': 'success',
-                'timestamp': datetime.now().isoformat()
-            }
-
-            if command == 'upload_file':
-                result = self._handle_upload_file(message)
-                response['result'] = result
-            elif command == 'download_file':
-                result = self._handle_download_file(message)
-                response['result'] = result
-            elif command == 'upload_directory':
-                result = self._handle_upload_directory(message)
-                response['result'] = result
-            elif command == 'download_directory':
-                result = self._handle_download_directory(message)
-                response['result'] = result
-            elif command == 'update_config':
-                result = self._handle_update_config(message)
-                response['result'] = result
-            else:
-                response['status'] = 'error'
-                response['error'] = f"Comando desconhecido: {command}"
-
-            self.send_message(response)
-            ch.basic_ack(delivery_tag=method.delivery_tag)
-
-            self.config_manager.log_operation(
-                command,
-                response['status'],
-                json.dumps(response)
-            )
-
-        except Exception as e:
-            logger.error(f"Erro ao processar mensagem: {e}")
-            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-
-    def _handle_upload_file(self, message: Dict) -> Dict:
-        """Processa upload de arquivo"""
-        ftp = FTPManager(self.ftp_config)
-        if not ftp.connect():
-            return {'success': False, 'error': 'Falha ao conectar FTP'}
-
-        try:
-            local_path = message.get('local_path')
-            remote_path = message.get('remote_path')
-            success = ftp.upload_file(local_path, remote_path)
-            return {'success': success}
-        finally:
-            ftp.disconnect()
-
-    def _handle_download_file(self, message: Dict) -> Dict:
-        """Processa download de arquivo"""
-        ftp = FTPManager(self.ftp_config)
-        if not ftp.connect():
-            return {'success': False, 'error': 'Falha ao conectar FTP'}
-
-        try:
-            remote_path = message.get('remote_path')
-            local_path = message.get('local_path')
-            success = ftp.download_file(remote_path, local_path)
-            return {'success': success}
-        finally:
-            ftp.disconnect()
-
-    def _handle_upload_directory(self, message: Dict) -> Dict:
-        """Processa upload de diretório"""
-        ftp = FTPManager(self.ftp_config)
-        if not ftp.connect():
-            return {'success': False, 'error': 'Falha ao conectar FTP'}
-
-        try:
-            local_dir = message.get('local_dir')
-            remote_dir = message.get('remote_dir')
-            success = ftp.upload_directory(local_dir, remote_dir)
-            return {'success': success}
-        finally:
-            ftp.disconnect()
-
-    def _handle_download_directory(self, message: Dict) -> Dict:
-        """Processa download de diretório"""
-        ftp = FTPManager(self.ftp_config)
-        if not ftp.connect():
-            return {'success': False, 'error': 'Falha ao conectar FTP'}
-
-        try:
-            remote_dir = message.get('remote_dir')
-            local_dir = message.get('local_dir')
-            success = ftp.download_directory(remote_dir, local_dir)
-            return {'success': success}
-        finally:
-            ftp.disconnect()
 
     def _handle_update_config(self, message: Dict) -> Dict:
         """Atualiza configurações"""
@@ -244,6 +154,9 @@ class RabbitMQService:
 
                 self.channel.start_consuming()
             except KeyboardInterrupt:
+                self.stop()
+            except ValueError as ve:
+                logger.error(f"Erro de configuração: {ve}")
                 self.stop()
             except Exception as e:
                 logger.error(f"Erro no serviço RabbitMQ: {e}")
