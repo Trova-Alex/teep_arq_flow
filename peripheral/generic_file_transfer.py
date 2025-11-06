@@ -66,19 +66,35 @@ class GenericFileTransfer:
                 result = get_file_tree(self.local_path, include_hidden=False, max_depth=1)
                 logger.info(f"File tree: {result}")
                 response['action'] = ActionTable.SERVER_FILE_TREE.value
-            elif action == ActionTable.GET_CLIENT_FILE_TREE.value:
+            elif action == ActionTable.GET_REMOTE_FILE_TREE.value:
                 data = message.get('data', {})
                 remote_path = data.get('value', '')
                 result = self._handle_list_directory(remote_path)
                 response['action'] = ActionTable.CLIENT_FILE_TREE.value
-            elif action == ActionTable.STREAM_FILE.value:
+            elif action == ActionTable.STREAM_DIRECTORY.value:
                 data = message.get('data', {})
                 local_path = data.get('value', '')
                 result = self._handle_upload_directory(local_path)
+            elif action == ActionTable.STREAM_FILE.value:
+                data = message.get('data', {})
+                local_path = data.get('value', '')
+                result = self._handle_upload_file(local_path)
             elif action == ActionTable.DOWNLOAD_FILE.value:
                 data = message.get('data', {})
                 remote_path = data.get('value', '')
+                result = self._handle_download_file(remote_path)
+            elif action == ActionTable.DOWNLOAD_DIRECTORY.value:
+                data = message.get('data', {})
+                remote_path = data.get('value', '')
                 result = self._handle_download_directory(remote_path)
+            elif action == ActionTable.DELETE_REMOTE_FILE.value:
+                data = message.get('data', {})
+                remote_path = data.get('value', '')
+                result = self._handle_delete_remote_file(remote_path)
+            elif action == ActionTable.DELETE_REMOTE_DIRECTORY.value:
+                data = message.get('data', {})
+                remote_path = data.get('value', '')
+                result = self._handle_delete_remote_directory(remote_path)
             else:
                 response['action'] = ActionTable.ERROR.value
                 result = f"Comando desconhecido: {action}"
@@ -104,32 +120,6 @@ class GenericFileTransfer:
         except Exception as e:
             logger.error(f"Erro ao processar mensagem: {e}")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-
-    def _handle_upload_file(self, message: Dict) -> Dict:
-        """Processa upload de arquivo"""
-        if not self.ftp.connect():
-            return {'success': False, 'error': 'Falha ao conectar FTP'}
-
-        try:
-            local_path = message.get('local_path')
-            remote_path = message.get('remote_path')
-            success = self.ftp.upload_file(local_path, remote_path)
-            return success
-        finally:
-           self.ftp.disconnect()
-
-    def _handle_download_file(self, message: Dict) -> Dict:
-        """Processa download de arquivo"""
-        if not self.ftp.connect():
-            return {'success': False, 'error': 'Falha ao conectar FTP'}
-
-        try:
-            remote_path = message.get('remote_path')
-            local_path = message.get('local_path')
-            success = self.ftp.download_file(remote_path, local_path)
-            return success
-        finally:
-            self.ftp.disconnect()
 
     def _handle_upload_directory(self, local_path: str) -> Dict:
         """Processa upload de diretório"""
@@ -158,6 +148,39 @@ class GenericFileTransfer:
             response['action'] = ActionTable.ERROR.value
             response['data']['value'] = str(e)
             self.send_message(response, f"send_queue_index_{str(self.get_index())}")
+            logger.error(f"Erro ao fazer upload do diretório: {e}")
+            return {'success': False, 'error': str(e)}
+        finally:
+            self.ftp.disconnect()
+
+    def _handle_upload_file(self, local_path: str) -> Dict:
+        """Processa upload de arquivo"""
+        if not self.ftp.connect():
+            return {'success': False, 'error': 'Falha ao conectar FTP'}
+
+        response = {
+            'action': ActionTable.START_STREAM_FILE.value,
+            'data': {
+                'index': self.get_index(),
+                'value': '',
+                'timestamp': int(datetime.now().timestamp())
+            }
+        }
+
+        self.send_message(response, f"send_queue_index_{str(self.get_index())}")
+
+        try:
+            local_file = local_path
+            remote_file = f"{self.io.local_path}/{local_path.split('/')[-1]}"
+            success = self.ftp.upload_file(local_file, remote_file)
+            response['action'] = ActionTable.FINISH_STREAM_FILE.value
+            self.send_message(response, f"send_queue_index_{str(self.get_index())}")
+            return success
+        except Exception as e:
+            response['action'] = ActionTable.ERROR.value
+            response['data']['value'] = str(e)
+            self.send_message(response, f"send_queue_index_{str(self.get_index())}")
+            logger.error(f"Erro ao fazer upload do arquivo: {e}")
             return {'success': False, 'error': str(e)}
         finally:
             self.ftp.disconnect()
@@ -189,6 +212,79 @@ class GenericFileTransfer:
             response['action'] = ActionTable.ERROR_DOWNLOAD_FILE.value
             response['data']['value'] = str(e)
             self.send_message(response, f"send_queue_index_{str(self.get_index())}")
+            logger.error(f"Erro ao fazer download do diretório: {e}")
+            return {'success': False, 'error': str(e)}
+        finally:
+            self.ftp.disconnect()
+
+    def _handle_download_file(self, remote_path: str) -> Dict:
+        """Processa download de arquivo"""
+        if not self.ftp.connect():
+            return {'success': False, 'error': 'Falha ao conectar FTP'}
+
+        response = {
+            'action': ActionTable.START_DOWNLOAD_FILE.value,
+            'data': {
+                'index': self.get_index(),
+                'value': '',
+                'timestamp': int(datetime.now().timestamp())
+            }
+        }
+        self.send_message(response, f"send_queue_index_{str(self.get_index())}")
+
+        try:
+            remote_file = remote_path
+            local_file = f"{self.local_path}/{remote_path.split('/')[-1]}"
+            logger.info(f"Downloading file from {remote_file} to {local_file}")
+            success = self.ftp.download_file(remote_file, local_file)
+            response['action'] = ActionTable.FINISH_DOWNLOAD_FILE.value
+            self.send_message(response, f"send_queue_index_{str(self.get_index())}")
+            return success
+        except Exception as e:
+            response['action'] = ActionTable.ERROR_DOWNLOAD_FILE.value
+            response['data']['value'] = str(e)
+            self.send_message(response, f"send_queue_index_{str(self.get_index())}")
+            logger.error(f"Erro ao fazer download do arquivo: {e}")
+            return {'success': False, 'error': str(e)}
+        finally:
+            self.ftp.disconnect()
+
+    def _handle_delete_remote_file(self, remote_path: str) -> Dict:
+        """Deleta um arquivo remoto"""
+        if not self.ftp.connect():
+            return {'success': False, 'error': 'Falha ao conectar FTP'}
+
+        try:
+            success = self.ftp.delete_remote_file(remote_path)
+            return success
+        except Exception as e:
+            response = {'action': ActionTable.ERROR.value, 'data': {
+                'index': str(e),
+                'value': '',
+                'timestamp': int(datetime.now().timestamp())
+            }}
+            self.send_message(response, f"send_queue_index_{str(self.get_index())}")
+            logger.error(f"Erro ao deletar arquivo remoto: {e}")
+            return {'success': False, 'error': str(e)}
+        finally:
+            self.ftp.disconnect()
+
+    def _handle_delete_remote_directory(self, remote_path: str) -> Dict:
+        """Deleta um diretório remoto"""
+        if not self.ftp.connect():
+            return {'success': False, 'error': 'Falha ao conectar FTP'}
+
+        try:
+            success = self.ftp.delete_remote_path(remote_path)
+            return success
+        except Exception as e:
+            response = {'action': ActionTable.ERROR.value, 'data': {
+                'index': str(e),
+                'value': '',
+                'timestamp': int(datetime.now().timestamp())
+            }}
+            self.send_message(response, f"send_queue_index_{str(self.get_index())}")
+            logger.error(f"Erro ao deletar diretório remoto: {e}")
             return {'success': False, 'error': str(e)}
         finally:
             self.ftp.disconnect()
@@ -201,5 +297,14 @@ class GenericFileTransfer:
         try:
             file_list = self.ftp.list_remote(f'{self.io.local_path}{remote_path}')
             return file_list
+        except Exception as e:
+            response = {'action': ActionTable.ERROR.value, 'data': {
+                'index': str(e),
+                'value': '',
+                'timestamp': int(datetime.now().timestamp())
+            }}
+            self.send_message(response, f"send_queue_index_{str(self.get_index())}")
+            logger.error(f"Erro ao listar diretório remoto: {e}")
+            return {'success': False, 'error': str(e)}
         finally:
             self.ftp.disconnect()

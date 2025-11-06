@@ -9,7 +9,7 @@ from typing import Dict, Any
 logger = logging.getLogger(__name__)
 
 
-def normalize_remote_path(path: str) -> str:
+def normalize_path(path: str) -> str:
     """Normalize remote FTP path: convert backslashes, collapse duplicate slashes, strip trailing slash except root."""
     if path is None:
         return path
@@ -106,6 +106,8 @@ class FTPManager:
 
     def upload_file(self, local_path: str, remote_path: str) -> bool:
         """Envia um arquivo via FTP"""
+        local_path = normalize_path(local_path or '')
+        remote_path = normalize_path(remote_path or '')
         try:
             with open(local_path, 'rb') as f:
                 self.ftp.storbinary(f'STOR {remote_path}', f)
@@ -117,6 +119,8 @@ class FTPManager:
 
     def download_file(self, remote_path: str, local_path: str) -> bool:
         """Baixa um arquivo via FTP"""
+        remote_path = normalize_path(remote_path)
+        local_path = normalize_path(local_path)
         try:
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
             with open(local_path, 'wb') as f:
@@ -129,7 +133,8 @@ class FTPManager:
 
     def upload_directory(self, local_dir: str, remote_dir: str) -> bool:
         """Envia uma pasta inteira via FTP"""
-        remote_dir = normalize_remote_path(remote_dir or '')
+        remote_dir = normalize_path(remote_dir or '')
+        local_dir = normalize_path(local_dir or '')
         try:
             local_path = Path(local_dir)
 
@@ -141,7 +146,7 @@ class FTPManager:
             for item in local_path.rglob('*'):
                 if item.is_file():
                     relative_path = item.relative_to(local_path)
-                    remote_file_path = normalize_remote_path(f"{remote_dir}/{relative_path}")
+                    remote_file_path = normalize_path(f"{remote_dir}/{relative_path}")
                     remote_file_dir = os.path.dirname(remote_file_path)
 
                     self._create_remote_dirs(remote_file_dir)
@@ -167,7 +172,7 @@ class FTPManager:
 
     def _create_remote_dirs(self, remote_path: str):
         """Cria diretórios remotos recursivamente"""
-        remote_path = normalize_remote_path(remote_path or '')
+        remote_path = normalize_path(remote_path or '')
         if remote_path == '':
             return
         dirs = remote_path.split('/')
@@ -182,7 +187,7 @@ class FTPManager:
 
     def _download_recursive(self, remote_dir: str, local_dir: str):
         """Baixa arquivos recursivamente"""
-        remote_dir = normalize_remote_path(remote_dir or '.')
+        remote_dir = normalize_path(remote_dir or '.')
         items = []
         self.ftp.retrlines('LIST', items.append)
 
@@ -196,7 +201,7 @@ class FTPManager:
                 continue
 
             if item.startswith('d'):
-                new_remote = normalize_remote_path(f"{remote_dir}/{name}")
+                new_remote = normalize_path(f"{remote_dir}/{name}")
                 new_local = os.path.join(local_dir, name)
                 os.makedirs(new_local, exist_ok=True)
 
@@ -205,7 +210,7 @@ class FTPManager:
                 self._download_recursive(new_remote, new_local)
                 self.ftp.cwd(current_dir)
             else:
-                new_remote = normalize_remote_path(f"{remote_dir}/{name}")
+                new_remote = normalize_path(f"{remote_dir}/{name}")
                 local_file = os.path.join(local_dir, name)
                 self.download_file(new_remote, local_file)
 
@@ -215,7 +220,7 @@ class FTPManager:
         Each entry: {name, path, type: 'file'|'directory', size, mtime}
         Tries MLSD (preferable) and falls back to parsing LIST output.
         """
-        remote_dir = normalize_remote_path(remote_dir or '.')
+        remote_dir = normalize_path(remote_dir or '.')
         try:
             entries_lines = []
             # ensure we are in the target dir for MLSD when possible
@@ -245,8 +250,8 @@ class FTPManager:
             def make_path(dir_path: str, name: str) -> str:
                 if dir_path in ('', '.', '/'):
                     base = '/' if dir_path == '/' else ''
-                    return normalize_remote_path(f"{base}{name}")
-                return normalize_remote_path(f"{dir_path.rstrip('/')}/{name}")
+                    return normalize_path(f"{base}{name}")
+                return normalize_path(f"{dir_path.rstrip('/')}/{name}")
 
             if using_mlsd:
                 # MLSD lines have semicolon-separated facts then the name
@@ -313,3 +318,140 @@ class FTPManager:
         except Exception as e:
             logger.error("Erro ao listar diretório remoto: %s", e)
             return []
+
+    def delete_remote_file(self, remote_path: str) -> bool:
+        """Remove um arquivo remoto via FTP"""
+        remote_path = normalize_path(remote_path or '')
+        if not remote_path:
+            logger.error("delete_file: caminho remoto vazio")
+            return False
+
+        # ensure connected
+        if self.ftp is None:
+            if not self.connect():
+                logger.error("delete_file: FTP não conectado e tentativa de conexão falhou")
+                return False
+
+        try:
+            # try deleting by full path first
+            try:
+                self.ftp.delete(remote_path)
+                logger.info("Arquivo removido: %s", remote_path)
+                return True
+            except Exception:
+                # fallback: change to directory and delete basename
+                dirname = os.path.dirname(remote_path)
+                basename = os.path.basename(remote_path)
+                if not basename:
+                    logger.error("delete_file: nome de arquivo inválido em %s", remote_path)
+                    return False
+
+                current = None
+                try:
+                    try:
+                        current = self.ftp.pwd()
+                    except Exception:
+                        current = None
+
+                    if dirname:
+                        try:
+                            self.ftp.cwd(dirname)
+                        except Exception:
+                            # some servers require absolute path; try as-is
+                            self.ftp.cwd(dirname or '/')
+
+                    self.ftp.delete(basename)
+                    logger.info("Arquivo removido: %s (via cwd %s)", basename, dirname or '.')
+                    return True
+                finally:
+                    if current:
+                        try:
+                            self.ftp.cwd(current)
+                        except Exception:
+                            pass
+
+        except Exception as e:
+            logger.error("Erro ao remover arquivo remoto %s: %s", remote_path, e)
+            return False
+
+    def delete_remote_path(self, remote_path: str) -> bool:
+        """Remove a remote path (file or directory) recursively via FTP."""
+        remote_path = normalize_path(remote_path or '')
+        if not remote_path or remote_path == '/':
+            logger.error("delete_remote_path: invalid or root path: %s", remote_path)
+            return False
+
+        # ensure connected
+        if self.ftp is None:
+            if not self.connect():
+                logger.error("delete_remote_path: FTP not connected and reconnect failed")
+                return False
+
+        try:
+            # If it's a file, delete_file will succeed
+            try:
+                if self.delete_remote_file(remote_path):
+                    return True
+            except Exception:
+                # continue to treat as directory
+                pass
+
+            # Treat as directory: list entries and remove children first
+            entries = self.list_remote(remote_path, include_hidden=True)
+            for e in entries:
+                try:
+                    entry_path = normalize_path(e.get('path') or '')
+                    if not entry_path:
+                        continue
+                    if e.get('type') == 'file':
+                        if not self.delete_remote_file(entry_path):
+                            logger.warning("Failed to delete remote file: %s", entry_path)
+                    else:
+                        if not self.delete_remote_path(entry_path):
+                            logger.warning("Failed to delete remote directory: %s", entry_path)
+                except Exception as ex:
+                    logger.exception("Error deleting child %s: %s", e, ex)
+
+            # After children removed, attempt rmd on the directory
+            try:
+                self.ftp.rmd(remote_path)
+                logger.info("Remote directory removed: %s", remote_path)
+                return True
+            except Exception:
+                # fallback: rmd by basename after cwd to parent
+                parent = os.path.dirname(remote_path)
+                base = os.path.basename(remote_path)
+                if not base:
+                    logger.error("delete_remote_path: invalid basename for %s", remote_path)
+                    return False
+
+                current = None
+                try:
+                    try:
+                        current = self.ftp.pwd()
+                    except Exception:
+                        current = None
+
+                    if parent:
+                        try:
+                            self.ftp.cwd(parent)
+                        except Exception:
+                            # attempt absolute parent or '/'
+                            try:
+                                self.ftp.cwd(parent or '/')
+                            except Exception:
+                                pass
+
+                    self.ftp.rmd(base)
+                    logger.info("Remote directory removed: %s (via cwd %s)", base, parent or '.')
+                    return True
+                finally:
+                    if current:
+                        try:
+                            self.ftp.cwd(current)
+                        except Exception:
+                            pass
+
+        except Exception as e:
+            logger.error("Erro ao remover caminho remoto %s: %s", remote_path, e)
+            return False
