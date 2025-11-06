@@ -416,7 +416,7 @@
                         <label>Interface</label>
                         <select id="peripheralInterface">
                             <option value="">-- Selecionar --</option>
-                            <option value="FTP">TCP/IP Serial</option>
+                            <option value="TCPIP">TCP/IP Serial</option>
                             <option value="FTP">FTP</option>
                             <option value="SCP">SCP</option>
                         </select>
@@ -489,7 +489,7 @@
                             </div>
                             <div class="form-group">
                                 <label>Index Virtual*</label>
-                                <input id="newIndexVirtual" type="number" min="0" required />
+                                <input id="newIndexVirtual" type="number" min="0"/>
                             </div>
                             <div class="form-group">
                                 <label>Tipos de Notificação*</label>
@@ -997,6 +997,7 @@
             if (!r.ok) throw r;
             return r.json();
           }).then(p => {
+              console.log('Carregando periférico para edição:', p);
             if (idEl) idEl.value = p.id ?? '';
             if (nameEl) nameEl.value = p.name ?? '';
             if (ifaceEl) ifaceEl.value = p.interface ?? '';
