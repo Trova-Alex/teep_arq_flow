@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List
 from ftp_manager import FTPManager
 from helpers.enums import ActionTable
 
@@ -19,7 +19,7 @@ class IO:
 
 
 # python
-def _handle_list_local_directory(local_path: str) -> Dict:
+def _handle_list_local_directory(local_path: str) -> List[Dict[str, Any]]:
     try:
         entries = []
         with os.scandir(local_path) as it:
@@ -31,10 +31,10 @@ def _handle_list_local_directory(local_path: str) -> Dict:
                     'size': info.st_size,
                     'modified': int(info.st_mtime)
                 })
-        return {'success': True, 'files': entries}
+        return entries
     except Exception as e:
         logger.error(f"Erro ao listar diretório local: {e}")
-        return {'success': False, 'error': str(e)}
+        return []
 
 
 class GenericFileTransfer:
@@ -238,7 +238,7 @@ class GenericFileTransfer:
 
         return self._with_ftp(op)
 
-    def _handle_list_directory(self, remote_path: str) -> Dict:
+    def _handle_list_directory(self, remote_path: str) -> List:
         def op():
             # join configured base path and requested remote path cleanly
             full_remote = self._join_remote(self.io.local_path, remote_path)
