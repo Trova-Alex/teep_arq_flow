@@ -559,25 +559,174 @@ function closePeripheralModal(){ document.getElementById('peripheralModal').clas
 function openAddIndexModal(){ document.getElementById('addIndexModal').classList.add('active'); }
 function closeAddIndexModal(){ document.getElementById('addIndexModal').classList.remove('active'); }
 
-function insertDefaultConnectionParams(){
-  const el = document.getElementById('peripheralJsonConnectionParams');
-  el.value = JSON.stringify({host:"192.168.0.7",port:8234,timeout:3,model:"dnc"},null,2);
+function insertDefaultConnectionParams() {
+    const ta = document.getElementById('peripheralJsonConnectionParams');
+    const ifaceEl = document.getElementById('peripheralInterface');
+    if (!ta || !ifaceEl) return;
+
+    const existing = ta.value.trim();
+    if (existing && !confirm('O campo já contém texto. Deseja substituir pelo JSON padrão para a interface selecionada?')) return;
+
+    const val = (ifaceEl.value || '').toUpperCase();
+    const text = (ifaceEl.options[ifaceEl.selectedIndex]?.text || '').toUpperCase();
+    const key = `${val} ${text}`;
+
+    let defaults;
+
+    if (/SFTP/.test(key)) {
+        defaults = {
+            host: "192.168.0.7",
+            port: 22,
+            user: "user",
+            password: "pass",
+            private_key_path: "",
+            timeout: 30,
+            protocol: "sftp",
+            local_path: "/home/"
+        };
+    } else if (/SCP/.test(key)) {
+        defaults = {
+            host: "192.168.0.7",
+            port: 22,
+            user: "user",
+            password: "pass",
+            timeout: 30,
+            protocol: "scp",
+            local_path: "/home/"
+        };
+    } else if (/FTP/.test(key) && !/SFTP/.test(key)) {
+        defaults = {
+            host: "192.168.0.7",
+            port: 21,
+            user: "anonymous",
+            password: "",
+            passive: true,
+            timeout: 30,
+            protocol: "ftp",
+            local_path: "/home/"
+        };
+    } else if (/TCP|SERIAL|RS232|RS485/.test(key) || /TCP\/IP/.test(key)) {
+        defaults = {
+            host: "192.168.0.7",
+            port: 8234,
+            timeout: 3,
+            baudrate: 115200,
+            parity: "none",
+            stopbits: 1,
+            protocol: "tcp"
+        };
+    } else if (/DNC/.test(key)) {
+        defaults = {
+            host: "192.168.0.7",
+            port: 8234,
+            timeout: 3,
+            model: "dnc"
+        };
+    } else {
+        // generic fallback
+        defaults = {
+            host: "192.168.0.7",
+            port: 8234,
+            timeout: 3,
+            model: "generic"
+        };
+    }
+
+    try {
+        ta.value = JSON.stringify(defaults, null, 2);
+    } catch (e) {
+        ta.value = '{"host":"192.168.0.7","port":8234,"timeout":3}';
+    }
 }
 
-function addIndex(){
-  try{
-    const field = document.getElementById('peripheralJsonChannelToVirtualIndex');
-    const obj = field.value ? JSON.parse(field.value) : {};
-    const key = document.getElementById('newIndexType').value + (document.getElementById('newIndexChannel').value ? '_' + document.getElementById('newIndexChannel').value : '');
-    obj[key] = { index: String(document.getElementById('newIndexVirtual').value||0), notification_type: Number(document.getElementById('newNotificationType').value||0) };
-    field.value = JSON.stringify(obj,null,2);
+function addIndex(event) {
+    const chEl = document.getElementById('newIndexChannel');
+    const typeEl = document.getElementById('newIndexType');
+    const vEl = document.getElementById('newIndexVirtual');
+    const notificationTypeEl = document.getElementById('newNotificationType');
+    const ta = document.getElementById('peripheralJsonChannelToVirtualIndex');
+
+    if (!chEl || !typeEl || !vEl || !notificationTypeEl || !ta) return;
+
+    const channelRaw = chEl.value.trim();
+    const type = (typeEl.value || 'DIGITAL_INPUT').trim();
+    const virtualIndexRaw = vEl.value;
+    const notificationType = parseInt(notificationTypeEl.value, 10) || 0;
+
+    if (virtualIndexRaw === '') {
+        alert('Preencha o index virtual.');
+        return;
+    }
+
+    const channel = channelRaw;
+    const virtual_index = String(virtualIndexRaw);
+    const interval = 1000;
+    const defaultPath = '';
+
+    let key = type;
+    if (channel !== '') key += `_${channel}`;
+
+    // parse existing textarea content into an object map
+    let obj = {};
+    const raw = ta.value.trim();
+    if (raw) {
+        try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                // convert array form to object map when possible
+                parsed.forEach(item => {
+                    if (!item) return;
+                    const ch = item.channel ?? item.ch ?? item.channel_id;
+                    const itype = item.type ?? type;
+                    const idx = item.virtual_index ?? item.index ?? item.v;
+                    if (ch !== undefined) {
+                        const k = `${itype}_${ch}`;
+                        obj[k] = {
+                            index: parseInt(idx ?? 0),
+                            notification_type: parseInt(item.notification_type ?? 0, 10) || 0,
+                            interval: item.interval ?? interval,
+                            path: item.path ?? undefined
+                        };
+                        // remove undefined properties for cleanliness
+                        if (obj[k].path === undefined) delete obj[k].path;
+                    }
+                });
+            } else if (parsed && typeof parsed === 'object') {
+                obj = parsed;
+            }
+        } catch (e) {
+            // invalid JSON: start fresh object
+            obj = {};
+        }
+    }
+
+    // build new entry: index and notification_type always present
+    const entry = {
+        index: virtual_index,
+        notification_type: notificationType
+    };
+
+    // add fields based on type
+    if (type === 'DIGITAL_INPUT') {
+        entry.interval = interval;
+    } else if (type === 'DNC') {
+        entry.send_interval = 0.1;
+        entry.end_program = 'END_PROGRAM';
+        entry.dir_to_save_dnc_program = 'machine_code/';
+        entry.api_save_file = "http://127.0.0.1:8000/production/api/save_new_file/";
+        entry.extension = "NC";
+    } else if (type === 'GENERIC_FILE_TRANSFER') {
+        entry.local_path = '/home/';
+    }
+
+    // insert/replace key
+    obj[key] = entry;
+
+    ta.value = JSON.stringify(obj, null, 2);
     closeAddIndexModal();
-    showAlert('success','Index adicionado');
-  } catch(e){ showAlert('error','JSON inválido'); }
 }
 
 async function savePeripheral(e){
-  e.preventDefault();
   const id = document.getElementById('peripheralId').value;
   const payload = {
     name: document.getElementById('peripheralName').value,
