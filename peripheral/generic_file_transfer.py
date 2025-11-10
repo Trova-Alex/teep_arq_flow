@@ -128,6 +128,8 @@ class GenericFileTransfer:
             if action == ActionTable.GET_SERVER_FILE_TREE.value:
                 data = message.get('data', {})
                 local_path = data.get('value', '')
+                if local_path == '':
+                    local_path = self.local_path
                 result = _handle_list_local_directory(local_path)
                 response['action'] = ActionTable.SERVER_FILE_TREE.value
             elif action == ActionTable.GET_REMOTE_FILE_TREE.value:
