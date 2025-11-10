@@ -126,7 +126,9 @@ class GenericFileTransfer:
             response = self._build_response(action)
 
             if action == ActionTable.GET_SERVER_FILE_TREE.value:
-                result = _handle_list_local_directory(self.local_path)
+                data = message.get('data', {})
+                local_path = data.get('value', '')
+                result = _handle_list_local_directory(local_path)
                 response['action'] = ActionTable.SERVER_FILE_TREE.value
             elif action == ActionTable.GET_REMOTE_FILE_TREE.value:
                 data = message.get('data', {})
