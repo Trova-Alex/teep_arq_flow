@@ -187,6 +187,7 @@ class GenericFileTransfer:
     # --- handlers ---------------------------------------------------------------
     def _handle_upload_directory(self, local_path: str) -> Dict:
         import posixpath
+        local_path = _join_path(self.local_path, local_path)
         def op():
             self._send(ActionTable.START_STREAM_FILE.value)
             local_dir = local_path
@@ -299,7 +300,7 @@ class GenericFileTransfer:
     def _handle_upload_file(self, local_path: str) -> Dict:
         def op():
             self._send(ActionTable.START_STREAM_FILE.value)
-            local_file = local_path
+            local_file = _join_path(self.local_path, local_path)
             remote_file = _join_path(self.io.local_path, os.path.basename(local_path))
             success = self.remote.upload_file(local_file, remote_file)
             self._send(ActionTable.FINISH_STREAM_FILE.value)
@@ -432,6 +433,7 @@ class GenericFileTransfer:
                 return {'success': success}
             return success
 
+        remote_path = _join_path(self.io.local_path, remote_path)
         return self._with_ftp(op)
 
     def _handle_delete_remote_directory(self, remote_path: str) -> Dict:
@@ -441,6 +443,7 @@ class GenericFileTransfer:
                 return {'success': success}
             return success
 
+        remote_path = _join_path(self.io.local_path, remote_path)
         return self._with_ftp(op)
 
     def _handle_list_directory(self, remote_path: str) -> List:
