@@ -6,20 +6,20 @@ Sistema de serviço Linux que integra RabbitMQ e FTP para transferência automat
 
 - ✅ service\ (systemd) para Linux (arquivo de unidade incluído)  
 - ✅ Integração com RabbitMQ para mensagens de comando/resposta  
-- ✅ Suporte a FTP e FTPS (TLS)  
+- ✅ Suporte a FTP, FTPS (TLS) e SCP 
 - ✅ Interface web com Flask para gerenciamento e monitoramento  
-- ✅ CRUD para servidores FTP  
+- ✅ CRUD para servidores periféricos
 - ✅ Histórico detalhado de operações com logging e persistência (SQLite)  
-- ✅ Upload/download recursivo de diretórios  
-- ✅ Exclusão remota recursiva (arquivos e diretórios) via `FTPManager.delete_remote_path`  
+- ✅ Upload/download recursivo de  arquivos e diretórios  
+- ✅ Exclusão remota recursiva (arquivos e diretórios)  
 - ✅ Listagem remota robusta usando MLSD quando disponível, fallback para LIST  
 - ✅ Operações FTP mais seguras: contexto para mudança de diretório remoto, tentativas e fallbacks para stor/retr  
 - ✅ Construção e envio de respostas unificados no handler `GenericFileTransfer`  
-- ✅ Melhor tratamento de erros e logging estruturado entre os módulos
+- ✅ Tratamento de erros e logging estruturado entre os módulos
 
 ## 🗂️ Uso via RabbitMQ
 
-Envie mensagens JSON para a fila de entrada configurada (padrão `recv_queue_index_$`). As respostas são publicadas na fila de saída configurada (padrão `send_queue_index_$`). Substitua o `\$` pelo índice do servidor FTP configurado.
+Envie mensagens JSON para a fila de entrada configurada (padrão `recv_queue_index_$`). As respostas são publicadas na fila de saída configurada (padrão `send_queue_index_$`). Substitua o `\$` pelo índice do servidor periférico configurado.
 
 Ações de alto nível suportadas:
 - upload_file, download_file  
