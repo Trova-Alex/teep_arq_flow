@@ -3,7 +3,7 @@ import json
 import logging
 from datetime import datetime
 from typing import Dict, Any, List
-from ftp_manager import FTPManager
+from ftp_manager import FTPManager, normalize_path
 from scp_manager import SCPManager
 from helpers.enums import ActionTable
 
@@ -18,9 +18,8 @@ class IO:
 
         print(f"{config} - IO initialized with index: {self.index}, notification_type: {self.notification_type}, local_path: {self.local_path}", flush=True)
 
-
-# python
-def _handle_list_local_directory(local_path: str) -> List[Dict[str, Any]]:
+def _handle_list_local_directory(local_path: str, path: str) -> List[Dict[str, Any]]:
+    local_path = _join_path(local_path, path)
     try:
         entries = []
         with os.scandir(local_path) as it:
@@ -36,6 +35,13 @@ def _handle_list_local_directory(local_path: str) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Erro ao listar diretório local: {e}")
         return []
+
+def _join_path(base: str, part: str) -> str:
+    base = (base or '').rstrip('/')
+    part = (part or '').lstrip('/')
+    if base == '':
+        return f"/{part}" if part else '/'
+    return f"{base}/{part}" if part else base
 
 
 class GenericFileTransfer:
@@ -92,13 +98,6 @@ class GenericFileTransfer:
         self.send_message(resp, f"recv_queue_index_{str(self.get_index())}")
         return resp
 
-    def _join_remote(self, base: str, part: str) -> str:
-        base = (base or '').rstrip('/')
-        part = (part or '').lstrip('/')
-        if base == '':
-            return f"/{part}" if part else '/'
-        return f"{base}/{part}" if part else base
-
     # Wrapper that ensures FTP connection and disconnect
     def _with_ftp(self, func, *args, **kwargs):
         if not self.remote.connect():
@@ -127,17 +126,13 @@ class GenericFileTransfer:
 
             if action == ActionTable.GET_SERVER_FILE_TREE.value:
                 data = message.get('data', {})
-                local_path = data.get('value', '')
-                if local_path == '':
-                    local_path = self.local_path
-                result = _handle_list_local_directory(local_path)
+                path = data.get('value', '')
+                result = _handle_list_local_directory(self.local_path, path)
                 response['action'] = ActionTable.SERVER_FILE_TREE.value
             elif action == ActionTable.GET_REMOTE_FILE_TREE.value:
                 data = message.get('data', {})
-                remote_path = data.get('value', '')
-                if remote_path == '':
-                    remote_path = self.io.local_path
-                result = self._handle_list_directory(remote_path)
+                path = data.get('value', '')
+                result = self._handle_list_directory(path)
                 response['action'] = ActionTable.CLIENT_FILE_TREE.value
             elif action == ActionTable.STREAM_DIRECTORY.value:
                 data = message.get('data', {})
@@ -305,7 +300,7 @@ class GenericFileTransfer:
         def op():
             self._send(ActionTable.START_STREAM_FILE.value)
             local_file = local_path
-            remote_file = self._join_remote(self.io.local_path, os.path.basename(local_path))
+            remote_file = _join_path(self.io.local_path, os.path.basename(local_path))
             success = self.remote.upload_file(local_file, remote_file)
             self._send(ActionTable.FINISH_STREAM_FILE.value)
             return success
@@ -451,7 +446,7 @@ class GenericFileTransfer:
     def _handle_list_directory(self, remote_path: str) -> List:
         def op():
             # join configured base path and requested remote path cleanly
-            full_remote = self._join_remote(self.io.local_path, remote_path)
+            full_remote = _join_path(self.io.local_path, remote_path)
             file_list = self.remote.list_remote(full_remote)
             return file_list
 
