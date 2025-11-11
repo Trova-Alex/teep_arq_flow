@@ -184,20 +184,14 @@ class GenericFileTransfer:
             logger.error(f"Erro ao processar mensagem: {e}")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
-    # --- handlers ---------------------------------------------------------------
     def _handle_upload_directory(self, local_path: str) -> Dict:
         import posixpath
         local_path = _join_path(self.local_path, local_path)
         def op():
-            self._send(ActionTable.START_STREAM_FILE.value)
+            self._send(ActionTable.START_STREAM_FILE.value, {'status': 'start'})
             local_dir = local_path
             remote_dir = self.io.local_path
 
-            # perform upload
-            upload_success = self.remote.upload_directory(local_dir, remote_dir)
-            self._send(ActionTable.FINISH_STREAM_FILE.value)
-
-            # always attempt verification if upload reported success
             verification = {
                 'success': False,
                 'missing_on_remote': [],
@@ -206,6 +200,75 @@ class GenericFileTransfer:
             }
 
             try:
+                # build list of files to upload with relative paths and sizes
+                files_to_upload = []
+                total_bytes = 0
+                for root, _, files in os.walk(local_dir):
+                    for f in files:
+                        abs_path = os.path.join(root, f)
+                        rel_path = os.path.relpath(abs_path, start=local_dir).replace(os.sep, '/')
+                        try:
+                            size = os.path.getsize(abs_path)
+                        except Exception:
+                            size = None
+                        files_to_upload.append((abs_path, rel_path, size))
+                        if size:
+                            total_bytes += int(size)
+
+                total_files = len(files_to_upload)
+                bytes_sent = 0
+                files_done = 0
+
+                # upload files one by one so progress can be reported
+                upload_errors = []
+                for abs_path, rel_path, size in sorted(files_to_upload, key=lambda x: x[1]):
+                    # build remote target path using posix style
+                    remote_target = posixpath.join(remote_dir.rstrip('/'), rel_path).lstrip('/')
+                    remote_target = f"/{remote_target}" if not remote_target.startswith('/') else remote_target
+
+                    try:
+                        # attempt per-file upload
+                        success = self.remote.upload_file(abs_path, remote_target)
+                        if isinstance(success, dict):
+                            ok = success.get('success', False)
+                        else:
+                            ok = bool(success)
+                        if not ok:
+                            upload_errors.append({'file': rel_path, 'error': success})
+                    except Exception as e:
+                        upload_errors.append({'file': rel_path, 'error': str(e)})
+
+                    # update counters
+                    files_done += 1
+                    if size:
+                        bytes_sent += int(size)
+
+                    # compute progress (bytes if available, else files)
+                    if total_bytes > 0:
+                        percent = int(bytes_sent * 100 / total_bytes)
+                    else:
+                        percent = int(files_done * 100 / total_files) if total_files > 0 else 100
+
+                    # send progress update
+                    progress_payload = {
+                        'file': rel_path,
+                        'file_index': files_done,
+                        'total_files': total_files,
+                        'bytes_sent': bytes_sent,
+                        'total_bytes': total_bytes,
+                        'percent': percent
+                    }
+                    try:
+                        self._send(ActionTable.PROGRESS_SEND_FILE.value, progress_payload)
+                    except Exception:
+                        logger.debug("Failed to send progress update for %s", rel_path)
+
+                self._send(ActionTable.FINISH_STREAM_FILE.value, {'status': 'finished', 'errors': upload_errors})
+
+                # if there were upload errors, still attempt verification but mark upload_result accordingly
+                upload_result = {'success': len(upload_errors) == 0, 'errors': upload_errors}
+
+                # perform verification as before
                 # build local file map: relative_path -> size
                 local_map = {}
                 for root, _, files in os.walk(local_dir):
@@ -220,7 +283,6 @@ class GenericFileTransfer:
 
                 # build remote file map by recursively listing remote directories
                 remote_map = {}
-                # normalize base remote path to avoid trailing slash issues
                 base_remote = (remote_dir or '/').rstrip('/')
                 if base_remote == '':
                     base_remote = '/'
@@ -230,21 +292,16 @@ class GenericFileTransfer:
                     cur_remote = queue.pop()
                     entries = self.remote.list_remote(cur_remote) or []
                     for e in entries:
-                        # be defensive about entry shape
                         name = e.get('name') if isinstance(e, dict) else None
                         if not name:
-                            # fallback keys
                             name = e.get('filename') or e.get('path') or ''
                         is_dir = bool(e.get('is_dir')) if isinstance(e, dict) else False
                         size = e.get('size') if isinstance(e, dict) else None
 
-                        # build joined remote path and relative path
                         joined = posixpath.join(cur_remote.rstrip('/'), name)
-                        # compute relative path to base_remote
                         rel_remote = posixpath.relpath(joined, base_remote).lstrip('./')
                         if rel_remote == '.':
                             rel_remote = ''
-                        # normalize to forward slashes
                         rel_remote = rel_remote.replace('\\', '/').lstrip('/')
 
                         if is_dir:
@@ -263,7 +320,6 @@ class GenericFileTransfer:
                 for key in sorted(local_keys & remote_keys):
                     lsize = local_map.get(key)
                     rsize = remote_map.get(key)
-                    # If either size is None, only flag if clearly different
                     if lsize is None or rsize is None:
                         if lsize != rsize:
                             size_mismatches.append({'path': key, 'local_size': lsize, 'remote_size': rsize})
@@ -274,23 +330,27 @@ class GenericFileTransfer:
                 verification['missing_on_remote'] = missing
                 verification['extra_on_remote'] = extra
                 verification['size_mismatches'] = size_mismatches
-                verification['success'] = (len(missing) == 0 and len(size_mismatches) == 0)
+                verification['success'] = (len(missing) == 0 and len(size_mismatches) == 0 and len(upload_errors) == 0)
 
             except Exception as e:
-                logger.exception("Verification after upload failed: %s", e)
+                logger.exception("Upload directory failed: %s", e)
                 verification['error'] = str(e)
+                upload_result = {'success': False, 'error': str(e)}
 
-            # return combined result: upload result and verification details
+            # return combined result (logged) but keep same return behavior as before
             result = {
-                'upload_result': upload_success if isinstance(upload_success, dict) else {'success': bool(upload_success)},
+                'upload_result': upload_result,
                 'verification': verification
             }
 
-            self.config_manager.log_operation(
-                "Upload Directory",
-                json.dumps(result['upload_result']),
-                json.dumps(result)
-            )
+            try:
+                self.config_manager.log_operation(
+                    "Upload Directory",
+                    json.dumps(result['upload_result']),
+                    json.dumps(result)
+                )
+            except Exception:
+                logger.debug("Failed to log upload operation")
 
             logger.info(f"Upload directory result: {result}")
             return verification['success']
@@ -302,7 +362,45 @@ class GenericFileTransfer:
             self._send(ActionTable.START_STREAM_FILE.value)
             local_file = _join_path(self.local_path, local_path)
             remote_file = _join_path(self.io.local_path, os.path.basename(local_path))
-            success = self.remote.upload_file(local_file, remote_file)
+
+            # try to get total size for progress reporting
+            try:
+                total_bytes = os.path.getsize(local_file)
+            except Exception:
+                total_bytes = None
+
+            # send initial progress (0%)
+            try:
+                init_payload = {
+                    'file': os.path.basename(local_path),
+                    'bytes_sent': 0,
+                    'total_bytes': total_bytes,
+                    'percent': 0
+                }
+                self._send(ActionTable.PROGRESS_SEND_FILE.value, init_payload)
+            except Exception:
+                logger.debug("Failed to send initial progress for %s", local_path)
+
+            # perform upload
+            try:
+                success = self.remote.upload_file(local_file, remote_file)
+            except Exception as e:
+                logger.exception("Upload file failed: %s", e)
+                success = {'success': False, 'error': str(e)}
+
+            # send final progress (100%)
+            try:
+                final_bytes = total_bytes if isinstance(total_bytes, (int, float)) else None
+                final_payload = {
+                    'file': os.path.basename(local_path),
+                    'bytes_sent': final_bytes,
+                    'total_bytes': total_bytes,
+                    'percent': 100
+                }
+                self._send(ActionTable.PROGRESS_SEND_FILE.value, final_payload)
+            except Exception:
+                logger.debug("Failed to send final progress for %s", local_path)
+
             self._send(ActionTable.FINISH_STREAM_FILE.value)
             return success
 

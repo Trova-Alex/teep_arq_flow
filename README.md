@@ -29,24 +29,25 @@ Ações de alto nível suportadas:
 - Operações de stream enviam notificações START/FINISH para transferências grandes
 
 ### Lista de actions suportadas
-| Nome da action | Código | Descrição |
-|---|---:|---|
-| `START_STREAM_FILE` | 33 | Indica início do envio de arquivo (stream) do servidor local para o FTP remoto |
-| `FINISH_STREAM_FILE` | 34 | Indica conclusão bem-sucedida do envio de arquivo |
-| `STREAM_FILE` | 35 | Comando para enviar um único arquivo |
-| `START_DOWNLOAD_FILE` | 55 | Indica início do download de arquivo do FTP remoto para o servidor local |
-| `FINISH_DOWNLOAD_FILE` | 56 | Indica conclusão bem-sucedida do download de arquivo |
-| `DOWNLOAD_FILE` | 63 | Comando para baixar um único arquivo |
-| `ERROR_DOWNLOAD_FILE` | 57 | Indica erro no download; detalhes estarão em `value` |
-| `GET_SERVER_FILE_TREE` | 58 | Solicita a árvore de arquivos do servidor local |
-| `GET_REMOTE_FILE_TREE` | 59 | Solicita a árvore de arquivos do FTP remoto |
-| `SERVER_FILE_TREE` | 60 | Resposta com a árvore de arquivos do servidor local |
-| `CLIENT_FILE_TREE` | 61 | Resposta com a árvore de arquivos do FTP remoto |
-| `ERROR` | 62 | Erro em alguma operação; detalhes em `value` |
-| `DELETE_REMOTE_FILE` | 63 | Comando para deletar arquivo no FTP remoto (retorna mesmo código em caso de sucesso) |
+| Nome da action            | Código | Descrição                                                                                      |
+|---------------------------|---:|------------------------------------------------------------------------------------------------|
+| `START_STREAM_FILE`       | 33 | Indica início do envio de arquivo (stream) do servidor local para o FTP remoto                 |
+| `FINISH_STREAM_FILE`      | 34 | Indica conclusão bem-sucedida do envio de arquivo                                              |
+| `STREAM_FILE`             | 35 | Comando para enviar um único arquivo                                                           |
+| `START_DOWNLOAD_FILE`     | 55 | Indica início do download de arquivo do FTP remoto para o servidor local                       |
+| `FINISH_DOWNLOAD_FILE`    | 56 | Indica conclusão bem-sucedida do download de arquivo                                           |
+| `DOWNLOAD_FILE`           | 63 | Comando para baixar um único arquivo                                                           |
+| `ERROR_DOWNLOAD_FILE`     | 57 | Indica erro no download; detalhes estarão em `value`                                           |
+| `GET_SERVER_FILE_TREE`    | 58 | Solicita a árvore de arquivos do servidor local                                                |
+| `GET_REMOTE_FILE_TREE`    | 59 | Solicita a árvore de arquivos do FTP remoto                                                    |
+| `SERVER_FILE_TREE`        | 60 | Resposta com a árvore de arquivos do servidor local                                            |
+| `CLIENT_FILE_TREE`        | 61 | Resposta com a árvore de arquivos do FTP remoto                                                |
+| `ERROR`                   | 62 | Erro em alguma operação; detalhes em `value`                                                   |
+| `DELETE_REMOTE_FILE`      | 63 | Comando para deletar arquivo no FTP remoto (retorna mesmo código em caso de sucesso)           |
 | `DELETE_REMOTE_DIRECTORY` | 64 | Comando para deletar diretório remoto recursivamente (retorna mesmo código em caso de sucesso) |
-| `STREAM_DIRECTORY` | 65 | Comando para enviar diretório local ao FTP remoto |
-| `DOWNLOAD_DIRECTORY` | 66 | Comando para baixar diretório do FTP remoto para o servidor local |
+| `STREAM_DIRECTORY`        | 65 | Comando para enviar diretório local ao FTP remoto                                              |
+| `DOWNLOAD_DIRECTORY`      | 66 | Comando para baixar diretório do FTP remoto para o servidor local                              |
+| `PROGRESS_SEND_FILE`      | 67 | Indica o progresso de envio de arquivos `value`                                                |
 
 ## Modos de uso:
 
@@ -212,7 +213,7 @@ Enviar arquivo local para o servidor FTP remoto
   }
 }
 ```
-Fayer download de arquivo do servidor FTP remoto para o local
+Fazer download de arquivo do servidor FTP remoto para o local
 - Enviar o seguinte JSON para a fila recv_queue_index_$ RabbitMQ:
 ```json
 {
@@ -232,5 +233,40 @@ Fayer download de arquivo do servidor FTP remoto para o local
     "value": "", 
     "timestamp": 1762463711
   }
+}
+```
+Progresso no envio de arquivo ou diretório:
+- A resposta para envio de diretório:
+```json
+{
+    "action": 67,
+    "data": {
+        "index": "88",
+        "value": {
+            "file": "program.txt",
+            "file_index": 1,
+            "total_files": 1,
+            "bytes_sent": 0,
+            "total_bytes": 0,
+            "percent": 100
+        },
+        "timestamp": 1762873063
+    }
+}
+```
+- A resposta para envio de arquivo:
+```json
+{
+    "action": 67,
+    "data": {
+        "index": "88",
+        "value": {
+          "file": "program.txt", 
+          "bytes_sent": 4096, 
+          "total_bytes": 4096, 
+          "percent": 100
+        },
+        "timestamp": 1762873063
+    }
 }
 ```

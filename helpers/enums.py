@@ -71,3 +71,5 @@ class ActionTable(Enum):
     STREAM_DIRECTORY = 65
     DOWNLOAD_DIRECTORY = 66
 
+    PROGRESS_SEND_FILE = 67
+
