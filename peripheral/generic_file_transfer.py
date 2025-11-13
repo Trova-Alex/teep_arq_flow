@@ -14,9 +14,10 @@ class IO:
     def __init__(self, config: Dict[str, Any]):
         self.index = config.get('index', None)
         self.notification_type = config.get('notification_type', 4)
-        self.local_path = config.get('local_path', './')
+        self.server_side_path = config.get('server_side_path', './')
+        self.remote_side_path = config.get('remote_side_path', './')
 
-        print(f"{config} - IO initialized with index: {self.index}, notification_type: {self.notification_type}, local_path: {self.local_path}", flush=True)
+        print(f"{config} - IO initialized with index: {self.index}, notification_type: {self.notification_type}, server_side_path: {self.server_side_path}, remote_side_path: {self.remote_side_path}", flush=True)
 
 def _handle_list_local_directory(local_path: str, path: str) -> List[Dict[str, Any]]:
     local_path = _join_path(local_path, path)
@@ -53,7 +54,6 @@ class GenericFileTransfer:
         self.passive = config.get('passive', True)
         self.timeout = config.get('timeout', 30)
         self.protocol = config.get('protocol', 'ftp')
-        self.local_path = config.get('local_path', './')
         self.remote = None
 
         if self.protocol.lower() == 'scp':
@@ -126,37 +126,49 @@ class GenericFileTransfer:
 
             if action == ActionTable.GET_SERVER_FILE_TREE.value:
                 data = message.get('data', {})
-                path = data.get('value', '')
-                result = _handle_list_local_directory(self.local_path, path)
+                value = data.get('value', {})
+                path = value.get('local_path', '')
+                result = _handle_list_local_directory(self.io.server_side_path, path)
                 response['action'] = ActionTable.SERVER_FILE_TREE.value
             elif action == ActionTable.GET_REMOTE_FILE_TREE.value:
                 data = message.get('data', {})
-                path = data.get('value', '')
+                value = data.get('value', {})
+                path = value.get('remote_path', '')
                 result = self._handle_list_directory(path)
                 response['action'] = ActionTable.CLIENT_FILE_TREE.value
             elif action == ActionTable.STREAM_DIRECTORY.value:
                 data = message.get('data', {})
-                local_path = data.get('value', '')
-                result = self._handle_upload_directory(local_path)
+                value = data.get('value', {})
+                local_path = value.get('local_path', '')
+                remote_path = value.get('remote_path', '')
+                result = self._handle_upload_directory(local_path, remote_path)
             elif action == ActionTable.STREAM_FILE.value:
                 data = message.get('data', {})
-                local_path = data.get('value', '')
-                result = self._handle_upload_file(local_path)
+                value = data.get('value', {})
+                local_path = value.get('local_path', '')
+                remote_path = value.get('remote_path', '')
+                result = self._handle_upload_file(local_path, remote_path)
             elif action == ActionTable.DOWNLOAD_FILE.value:
                 data = message.get('data', {})
-                remote_path = data.get('value', '')
-                result = self._handle_download_file(remote_path)
+                value = data.get('value', {})
+                local_path = value.get('local_path', '')
+                remote_path = value.get('remote_path', '')
+                result = self._handle_download_file(local_path, remote_path)
             elif action == ActionTable.DOWNLOAD_DIRECTORY.value:
                 data = message.get('data', {})
-                remote_path = data.get('value', '')
-                result = self._handle_download_directory(remote_path)
+                value = data.get('value', {})
+                local_path = value.get('local_path', '')
+                remote_path = value.get('remote_path', '')
+                result = self._handle_download_directory(local_path, remote_path)
             elif action == ActionTable.DELETE_REMOTE_FILE.value:
                 data = message.get('data', {})
-                remote_path = data.get('value', '')
+                value = data.get('value', {})
+                remote_path = value.get('remote_path', '')
                 result = self._handle_delete_remote_file(remote_path)
             elif action == ActionTable.DELETE_REMOTE_DIRECTORY.value:
                 data = message.get('data', {})
-                remote_path = data.get('value', '')
+                value = data.get('value', {})
+                remote_path = value.get('remote_path', '')
                 result = self._handle_delete_remote_directory(remote_path)
             else:
                 response['action'] = ActionTable.ERROR.value
@@ -239,13 +251,14 @@ class GenericFileTransfer:
                 logger.debug("Failed to ensure remote dir %s: %s", cur, e)
         return True
 
-    def _handle_upload_directory(self, local_path: str) -> Dict:
+    def _handle_upload_directory(self, local_path: str, remote_path: str) -> Dict:
         import posixpath
-        local_path = _join_path(self.local_path, local_path)
+        local_path = _join_path(self.io.server_side_path, local_path)
+        remote_path = _join_path((self.io.remote_side_path, remote_path))
         def op():
             self._send(ActionTable.START_STREAM_FILE.value, {'status': 'start'})
             local_dir = local_path
-            remote_dir = self.io.local_path
+            remote_dir = remote_path
 
             verification = {
                 'success': False,
@@ -419,11 +432,11 @@ class GenericFileTransfer:
 
         return self._with_ftp(op)
 
-    def _handle_upload_file(self, local_path: str) -> Dict:
+    def _handle_upload_file(self, local_path: str, remote_path: str) -> Dict:
         def op():
             self._send(ActionTable.START_STREAM_FILE.value)
-            local_file = _join_path(self.local_path, local_path)
-            remote_file = _join_path(self.io.local_path, os.path.basename(local_path))
+            local_file = _join_path(self.io.server_side_path, local_path)
+            remote_file = _join_path(self.io.remote_side_path, remote_path)
 
             # try to get total size for progress reporting
             try:
@@ -468,12 +481,12 @@ class GenericFileTransfer:
 
         return self._with_ftp(op)
 
-    def _handle_download_directory(self, remote_path) -> Dict:
+    def _handle_download_directory(self, local_path: str, remote_path: str) -> Dict:
         import posixpath
         def op():
             self._send(ActionTable.START_DOWNLOAD_FILE.value)
-            remote_dir = remote_path
-            local_dir = self.local_path
+            remote_dir = _join_path(self.io.remote_side_path, remote_path)
+            local_dir = _join_path(self.io.server_side_path, local_path)
             logger.info(f"Downloading directory from {remote_dir} to {local_dir}")
 
             # perform download
@@ -573,11 +586,11 @@ class GenericFileTransfer:
 
         return self._with_ftp(op)
 
-    def _handle_download_file(self, remote_path: str) -> Dict:
+    def _handle_download_file(self, local_path: str, remote_path: str) -> Dict:
         def op():
             self._send(ActionTable.START_DOWNLOAD_FILE.value)
-            remote_file = remote_path
-            local_file = os.path.join(self.local_path, os.path.basename(remote_path))
+            remote_file = _join_path(self.io.remote_side_path, remote_path)
+            local_file = _join_path(self.io.server_side_path, local_path)
             logger.info(f"Downloading file from {remote_file} to {local_file}")
             success = self.remote.download_file(remote_file, local_file)
             self._send(ActionTable.FINISH_DOWNLOAD_FILE.value)
@@ -609,7 +622,7 @@ class GenericFileTransfer:
     def _handle_list_directory(self, remote_path: str) -> List:
         def op():
             # join configured base path and requested remote path cleanly
-            full_remote = _join_path(self.io.local_path, remote_path)
+            full_remote = _join_path(self.io.remote_side_path, remote_path)
             file_list = self.remote.list_remote(full_remote)
             return file_list
 
