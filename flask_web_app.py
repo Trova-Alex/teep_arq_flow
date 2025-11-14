@@ -5,6 +5,8 @@ from werkzeug.serving import make_server
 import logging
 from pathlib import Path
 from threading import Thread
+from queue import Queue
+from models.message import Message
 
 configure_logging(app_name="rabbitmq_ftp_service", level="INFO")
 logger = logging.getLogger(__name__)
@@ -13,7 +15,7 @@ logger = logging.getLogger(__name__)
 class FlaskWebApp:
     """Aplicação web Flask para gerenciamento"""
 
-    def __init__(self, config_manager: ConfigManager, port: int = 5000):
+    def __init__(self, config_manager: ConfigManager, command_queue: Queue, port: int = 5000):
         self.config_manager = config_manager
         self.port = port
         templates_dir = str(Path(__file__).resolve().parent / "templates")
@@ -21,6 +23,7 @@ class FlaskWebApp:
         self.app.secret_key = 'rabbitmq-ftp-service-secret-key'
         self.server = None
         self.rabbitmq_service = None  # will be set from outside if available
+        self.command_queue = command_queue
         self._setup_routes()
 
     def set_rabbitmq_service(self, rabbitmq_service):
@@ -159,6 +162,21 @@ class FlaskWebApp:
                 self._trigger_rabbit_reconnect()
                 return jsonify({'message': 'Peripheral deleted'})
             except Exception as e:
+                return jsonify({'error': str(e)}), 400
+
+        @self.app.route('/api/activate_debug/<string:index>', methods=['POST'])
+        def activate_debug(index):
+            try:
+                self.command_queue.put(Message(
+                    index=str(index),
+                    cmd='START_DEBUG',
+                    args=(str(index),),
+                    kwargs={},
+                    reply_q=Queue()
+                ))
+                return jsonify({'message': f'Debug activated for peripheral {index}'})
+            except Exception as e:
+                logger.exception("activate_debug failed for index %s: %s", index, e)
                 return jsonify({'error': str(e)}), 400
 
     def start(self):

@@ -6,23 +6,37 @@ from typing import Dict, Any, TYPE_CHECKING
 import pika
 import time
 import os
+from queue import Queue
 from peripheral.generic_file_transfer import GenericFileTransfer
+from threading import Thread
+from models.message import Message
 
 if TYPE_CHECKING:
     from setup_config import ConfigManager  # only for type checking to avoid circular imports
 
 logger = logging.getLogger(__name__)
 
+
+def consume_queue(q: Queue, business_callback):
+    while True:
+        command = q.get()
+        if command is None:
+            break
+
+        business_callback(command)
+
 class RabbitMQService:
     """Serviço de integração com RabbitMQ"""
 
-    def __init__(self, config_manager: 'ConfigManager'):
+    def __init__(self, config_manager: 'ConfigManager', command_queue: Queue):
         self.config_manager = config_manager
         self.connection = None
         self.channel = None
         self.running = False
         self.consumed_queues = set()
         self.retry_delay = 5
+        self.command_queue = command_queue
+        self.queue_pool: Dict[str, Queue] = {}
 
         self.rabbitmq_config = config_manager.get('rabbitmq', {
             'host': 'localhost',
@@ -82,6 +96,7 @@ class RabbitMQService:
             _peripheral = GenericFileTransfer(json_connection_params,
                                               json_channel_to_virtual_index,
                                               self.send_message,
+                                              Queue(),
                                               self.config_manager)
 
             _index = _peripheral.get_index()
@@ -102,6 +117,8 @@ class RabbitMQService:
                 self.consumed_queues.add(recv_queue_name)
                 logger.info(f"consuming queue: {recv_queue_name}")
 
+            self.queue_pool[_index] = _peripheral.get_command_queue()
+
             logger.info(f"Filas declaradas: {recv_queue_name} - {send_queue_name}")
 
     def reconnect_now(self) -> bool:
@@ -112,48 +129,6 @@ class RabbitMQService:
         """
         logger.info("Forcing RabbitMQ reconnection now...")
         return
-        try:
-            # Stop and clear existing channel
-            if self.channel:
-                try:
-                    self.channel.stop_consuming()
-                except Exception:
-                    pass
-                self.channel = None
-
-            # Close and clear existing connection
-            if self.connection:
-                try:
-                    self.connection.close()
-                except Exception:
-                    pass
-                self.connection = None
-
-            # Try to connect once
-            if not self.connect():
-                logger.error("reconnect_now: connect() failed")
-                return False
-
-            # Redeclare queues for current configuration
-            try:
-                self.declare_queues()
-            except Exception as e:
-                logger.error(f"reconnect_now: error declaring queues: {e}")
-                # close connection on failure to avoid half-open state
-                try:
-                    if self.connection:
-                        self.connection.close()
-                except Exception:
-                    pass
-                self.connection = None
-                self.channel = None
-                return False
-
-            logger.info("reconnect_now: reconnection successful")
-            return True
-        except Exception as e:
-            logger.error(f"reconnect_now: unexpected error: {e}")
-            return False
 
     def send_message(self, message: Dict[str, Any], routing_key: str = None):
         """Envia uma mensagem para a fila de saída"""
@@ -185,6 +160,15 @@ class RabbitMQService:
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
+    def route_to_next_queue(self, message: Message):
+        """Roteia a mensagem para a próxima fila apropriada"""
+        if message.index is None:
+            logger.error("Mensagem recebida sem índice, não é possível rotear")
+            return
+
+        _queue = self.queue_pool.get(message.index)
+        _queue.put(message)
+
     def start(self):
         """Inicia o serviço"""
         self.running = True
@@ -197,6 +181,9 @@ class RabbitMQService:
 
             try:
                 self.declare_queues()
+
+                t = Thread(target=consume_queue, args=(self.command_queue, self.route_to_next_queue), daemon=True)
+                t.start()
 
                 logger.info("Serviço RabbitMQ iniciado. Aguardando mensagens...")
 

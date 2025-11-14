@@ -266,6 +266,7 @@
         <div class="nav-section">
           <h3>Navigation</h3>
           <button class="nav-btn active" onclick="switchTab(event,'peripherals')">Periféricos <span class="kbd">P</span></button>
+          <button class="nav-btn" onclick="switchTab(event,'debug')">Depurar <span class="kbd">D</span></button>
           <button class="nav-btn" onclick="switchTab(event,'history')">Histórico <span class="kbd">H</span></button>
           <button class="nav-btn" onclick="switchTab(event,'config')">Configurações <span class="kbd">C</span></button>
         </div>
@@ -286,6 +287,29 @@
         <section id="peripherals" class="tab-pane" aria-labelledby="Periféricos">
           <h2 style="margin-top:0">Periféricos</h2>
           <div id="peripherals-list" class="empty-state">Carregando periféricos...</div>
+        </section>
+
+        <section id="debug" class="tab-pane" style="display:none">
+          <h2 style="margin-top:0">Depurar</h2>
+
+          <div class="form-row" style="align-items:center;margin-bottom:12px;">
+            <div class="form-group" style="flex:1">
+              <label>Selecione o index</label>
+              <select id="debugIndexSelect">
+                <option value="">Carregando...</option>
+                <option value="88">88</option>
+              </select>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;margin-left:8px">
+              <button class="btn primary" onclick="startDebug()">▶ Iniciar Debug</button>
+              <input type="hidden" id="currentDebugPeripheral" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Logs (placeholder — será preenchido pela queue)</label>
+            <textarea id="debugLogs" readonly rows="12" placeholder="Aguardando logs..." style="width:100%;"></textarea>
+          </div>
         </section>
 
         <!-- History -->
@@ -436,6 +460,69 @@ document.addEventListener('DOMContentLoaded', () => {
   loadOperations();
   loadConfig();
 });
+
+async function openDebugForPeripheral(id){
+  try{
+    const res = await fetch(`/api/peripherals/${id}`);
+    if(!res.ok) { showAlert('error','Erro ao carregar periférico'); return; }
+    const p = await res.json();
+
+    const cfg = p.json_channel_to_virtual_index;
+    const sel = document.getElementById('debugIndexSelect');
+    sel.innerHTML = '';
+
+    const entries = [];
+    if(cfg){
+      if(Array.isArray(cfg)){
+        cfg.forEach((item, idx) => {
+          const val = item?.virtual_index ?? item?.index ?? item?.v ?? item?.virtualIndex;
+          const label = item?.channel ?? item?.ch ?? `#${idx}`;
+          if(val !== undefined && val !== null) entries.push({ index: String(val), label: String(label) });
+        });
+      } else if (typeof cfg === 'object'){
+        Object.entries(cfg).forEach(([k,v])=>{
+          const val = v?.index ?? v?.virtual_index ?? v?.v ?? (typeof v === 'number' ? v : undefined);
+          if(val !== undefined && val !== null) entries.push({ index: String(val), label: k });
+        });
+      }
+    }
+
+    if(entries.length === 0){
+      sel.innerHTML = '<option value="">Nenhum index disponível</option>';
+    } else {
+      sel.innerHTML = entries.map(e => `<option value="${escapeJs(e.index)}">${escapeHtml(e.label)} (${escapeHtml(e.index)})</option>`).join('');
+    }
+
+    document.getElementById('debugLogs').value = '';
+    document.getElementById('currentDebugPeripheral').value = id;
+    // switch to debug tab
+    switchTab(null, 'debug');
+  } catch(err){
+    console.error(err);
+    showAlert('error','Erro ao carregar periférico');
+  }
+}
+
+async function startDebug(){
+  const sel = document.getElementById('debugIndexSelect');
+  if(!sel) return showAlert('error','Selector não encontrado');
+  const idx = sel.value;
+  if(!idx) return showAlert('error','Selecione um index para depurar');
+
+  try{
+    const res = await fetch(`/api/activate_debug/${encodeURIComponent(idx)}`, { method: 'POST' });
+    if(res.ok){
+      showAlert('success','Debug iniciado');
+      // future: start appending logs to #debugLogs as they arrive via SSE/WebSocket
+    } else {
+      const err = await res.json().catch(()=>({}));
+      showAlert('error', err.error || 'Falha ao iniciar debug');
+    }
+  } catch(e){
+    console.error(e);
+    showAlert('error','Erro ao iniciar debug');
+  }
+}
 
 async function loadPeripherals(){
   const list = document.getElementById('peripherals-list');
