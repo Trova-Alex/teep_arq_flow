@@ -105,12 +105,58 @@ class FTPManager:
                 except Exception:
                     pass
 
+    def _create_remote_dirs(self, remote_path: str) -> None:
+        remote_path = normalize_path(remote_path or '')
+        if not remote_path or remote_path in ('.', '/'):
+            return
+        parts = [p for p in remote_path.split('/') if p]
+        cur = ''
+        for p in parts:
+            cur = f"{cur}/{p}"
+            # 1) Try absolute MKD
+            try:
+                self.ftp.mkd(cur)
+                continue
+            except Exception:
+                pass
+            # 2) If MKD failed, check if the directory already exists by trying to CWD into it
+            prev = None
+            try:
+                try:
+                    prev = self.ftp.pwd()
+                except Exception:
+                    prev = None
+                try:
+                    self.ftp.cwd(cur)
+                    # exists, restore cwd if possible
+                    if prev is not None:
+                        try:
+                            self.ftp.cwd(prev)
+                        except Exception:
+                            pass
+                    continue
+                except Exception:
+                    # 3) Try relative MKD
+                    try:
+                        self.ftp.mkd(p)
+                        continue
+                    except Exception:
+                        # 4) As a last check, try relative CWD to see if dir already exists
+                        try:
+                            if prev is not None:
+                                self.ftp.cwd(p)
+                                try:
+                                    self.ftp.cwd(prev)
+                                except Exception:
+                                    pass
+                                continue
+                        except Exception:
+                            pass
+            finally:
+                # no state changes kept here; continue to next part
+                pass
+
     def upload_file(self, local_path: str, remote_path: str):
-        """
-        Upload a file, with fallback to change to parent directory and STOR basename
-        when servers return errors like "550 Failed to change directory".
-        Returns dict {'success': bool, 'error': str (optional)} or boolean.
-        """
         if not self._ensure_connected():
             return {'success': False, 'error': 'Not connected'}
 
@@ -126,24 +172,40 @@ class FTPManager:
         try:
             with open(local_path, 'rb') as f:
                 try:
-                    # try direct STOR with full path
+                    f.seek(0)
                     self.ftp.storbinary(f"STOR {remote}", f)
-                    logger.info("Uploaded file to %s", remote)
+                    logger.info(f"Uploaded {local_path} to {remote}")
                     return {'success': True}
                 except Exception as first_exc:
-                    logger.warning("Direct upload failed for %s: %s", remote, first_exc)
-                    # fallback: attempt to cwd to parent and STOR basename
+                    logger.warning("Direct upload failed for %s to %s, error: %s", local_path, remote, first_exc)
                     parent = os.path.dirname(remote)
                     name = os.path.basename(remote)
                     if not name:
                         logger.error("upload_file: invalid remote name for %s", remote)
                         return {'success': False, 'error': 'invalid remote name'}
                     try:
+                        try:
+                            self._create_remote_dirs(parent)
+                        except Exception:
+                            logger.debug("Failed to create remote dirs for %s (ignored)", parent)
                         f.seek(0)
-                        with self._cwd(parent):
-                            self.ftp.storbinary(f"STOR {name}", f)
-                        logger.info("Uploaded file %s via cwd %s", name, parent)
-                        return {'success': True}
+                        try:
+                            # Preferred: change to parent and upload by basename
+                            with self._cwd(parent):
+                                self.ftp.storbinary(f"STOR {name}", f)
+                            logger.info("Uploaded file %s via cwd %s", name, parent)
+                            return {'success': True}
+                        except Exception as cwd_exc:
+                            logger.debug("cwd/upload to %s failed: %s; trying alternative STOR with full path", parent, cwd_exc)
+                            # Try storing using the full remote path as a final fallback
+                            try:
+                                f.seek(0)
+                                self.ftp.storbinary(f"STOR {remote}", f)
+                                logger.info("Uploaded file to %s (fallback full-path STOR)", remote)
+                                return {'success': True}
+                            except Exception as alt_exc:
+                                logger.error("upload_file fallback failed for %s via cwd %s: %s", name, parent, alt_exc)
+                                return {'success': False, 'error': str(alt_exc)}
                     except Exception as second_exc:
                         logger.error("upload_file fallback failed for %s via cwd %s: %s", name, parent, second_exc)
                         return {'success': False, 'error': str(second_exc)}
@@ -172,19 +234,6 @@ class FTPManager:
         except Exception as e:
             logger.error("download_file error: %s", e)
             return False
-
-    def _create_remote_dirs(self, remote_path: str) -> None:
-        remote_path = normalize_path(remote_path or '')
-        if not remote_path or remote_path in ('.', '/'):
-            return
-        parts = [p for p in remote_path.split('/') if p]
-        cur = ''
-        for p in parts:
-            cur = f"{cur}/{p}"
-            try:
-                self.ftp.mkd(cur)
-            except Exception:
-                pass
 
     def upload_directory(self, local_dir: str, remote_dir: str) -> bool:
         if not self._ensure_connected():

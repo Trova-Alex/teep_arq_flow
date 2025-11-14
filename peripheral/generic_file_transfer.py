@@ -89,10 +89,10 @@ class GenericFileTransfer:
         self.send_message = send_message_callback
         self.config_manager = config_manager
 
-        t = Thread(target=consume_queue, args=(self.command_queue, self.process_message), daemon=True)
+        t = Thread(target=consume_queue, args=(self.command_queue, self.process_command), daemon=True)
         t.start()
 
-    def process_message(self, message: Message):
+    def process_command(self, message: Message):
         if message.cmd == 'START_DEBUG':
             logger.debug(f"Debug message received: args={message.args}, kwargs={message.kwargs}")
 
@@ -275,7 +275,7 @@ class GenericFileTransfer:
     def _handle_upload_directory(self, local_path: str, remote_path: str) -> Dict:
         import posixpath
         local_path = _join_path(self.io.server_side_path, local_path)
-        remote_path = _join_path((self.io.remote_side_path, remote_path))
+        remote_path = _join_path(self.io.remote_side_path, remote_path)
         def op():
             self._send(ActionTable.START_STREAM_FILE.value, {'status': 'start'})
             local_dir = local_path
@@ -457,7 +457,10 @@ class GenericFileTransfer:
         def op():
             self._send(ActionTable.START_STREAM_FILE.value)
             local_file = _join_path(self.io.server_side_path, local_path)
-            remote_file = _join_path(self.io.remote_side_path, remote_path)
+            filename = os.path.basename(local_file)
+
+            remote_dir = _join_path(self.io.remote_side_path, remote_path)
+            remote_file = _join_path(remote_dir, filename)
 
             # try to get total size for progress reporting
             try:
@@ -476,6 +479,11 @@ class GenericFileTransfer:
                 self._send(ActionTable.PROGRESS_SEND_FILE.value, init_payload)
             except Exception:
                 logger.debug("Failed to send initial progress for %s", local_path)
+
+            try:
+                self._ensure_remote_dirs(remote_file)
+            except Exception:
+                logger.debug("Failed to create remote parent dirs for %s", parent_remote)
 
             # perform upload
             try:
