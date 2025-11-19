@@ -274,8 +274,10 @@ class GenericFileTransfer:
 
     def _handle_upload_directory(self, local_path: str, remote_path: str) -> Dict:
         import posixpath
+        new_remote_path = local_path
         local_path = _join_path(self.io.server_side_path, local_path)
         remote_path = _join_path(self.io.remote_side_path, remote_path)
+        remote_path = _join_path(remote_path, new_remote_path)
         def op():
             self._send(ActionTable.START_STREAM_FILE.value, {'status': 'start'})
             local_dir = local_path
@@ -454,6 +456,8 @@ class GenericFileTransfer:
         return self._with_ftp(op)
 
     def _handle_upload_file(self, local_path: str, remote_path: str) -> Dict:
+        import posixpath
+
         def op():
             self._send(ActionTable.START_STREAM_FILE.value)
             local_file = _join_path(self.io.server_side_path, local_path)
@@ -471,7 +475,7 @@ class GenericFileTransfer:
             # send initial progress (0%)
             try:
                 init_payload = {
-                    'file': os.path.basename(local_path),
+                    'file': filename,
                     'bytes_sent': 0,
                     'total_bytes': total_bytes,
                     'percent': 0
@@ -480,10 +484,12 @@ class GenericFileTransfer:
             except Exception:
                 logger.debug("Failed to send initial progress for %s", local_path)
 
+            # ensure parent directory exists (NOT the file itself)
             try:
-                self._ensure_remote_dirs(remote_file)
-            except Exception:
-                logger.debug("Failed to create remote parent dirs for %s", parent_remote)
+                parent_remote = posixpath.dirname(remote_file)
+                self._ensure_remote_dirs(parent_remote)
+            except Exception as e:
+                logger.debug("Failed to create remote parent dirs for %s: %s", parent_remote, e)
 
             # perform upload
             try:
@@ -496,7 +502,7 @@ class GenericFileTransfer:
             try:
                 final_bytes = total_bytes if isinstance(total_bytes, (int, float)) else None
                 final_payload = {
-                    'file': os.path.basename(local_path),
+                    'file': filename,
                     'bytes_sent': final_bytes,
                     'total_bytes': total_bytes,
                     'percent': 100
