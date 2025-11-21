@@ -173,6 +173,14 @@
     color: var(--muted);
   }
 
+  /* Actions container for grouping action buttons */
+  .actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+    align-items: center;
+  }
+
   /* Small responsive adjustments */
   @media (max-width:600px) {
     .btn { padding: 8px 10px; font-size: 0.95rem; }
@@ -266,6 +274,7 @@
         <div class="nav-section">
           <h3>Navigation</h3>
           <button class="nav-btn active" onclick="switchTab(event,'peripherals')">Periféricos <span class="kbd">P</span></button>
+          <button class="nav-btn" onclick="switchTab(event,'automations')">Automações <span class="kbd">A</span></button>
           <button class="nav-btn" onclick="switchTab(event,'debug')">Depurar <span class="kbd">D</span></button>
           <button class="nav-btn" onclick="switchTab(event,'history')">Histórico <span class="kbd">H</span></button>
           <button class="nav-btn" onclick="switchTab(event,'config')">Configurações <span class="kbd">C</span></button>
@@ -278,15 +287,22 @@
       </nav>
 
       <main class="content" role="main">
-        <div class="toolbar" role="toolbar">
-          <button class="btn primary" onclick="openPeripheralModal()">➕ Novo Periférico</button>
-          <div style="margin-left:auto" class="status-badge">Service: <strong style="margin-left:8px;color:var(--accent);">running</strong></div>
-        </div>
-
         <!-- Peripherals -->
         <section id="peripherals" class="tab-pane" aria-labelledby="Periféricos">
           <h2 style="margin-top:0">Periféricos</h2>
+          <div class="toolbar" role="toolbar">
+            <button class="btn primary" onclick="openPeripheralModal()">➕ Novo Periférico</button>
+          </div>
           <div id="peripherals-list" class="empty-state">Carregando periféricos...</div>
+        </section>
+
+        <!-- Automations -->
+        <section id="automations" class="tab-pane" style="display:none">
+          <h2 style="margin-top:0">Automações</h2>
+          <div class="toolbar" role="toolbar">
+            <button class="btn primary" onclick="openAutomationModal()">➕ Nova Automação</button>
+          </div>
+          <div id="automations-list" class="empty-state">Carregando automações...</div>
         </section>
 
         <section id="debug" class="tab-pane" style="display:none">
@@ -438,6 +454,107 @@
     </div>
   </div>
 
+  <!-- Automation Modal -->
+  <div id="automationModal" class="modal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <h2 id="automationModalTitle">Nova Automação</h2>
+      <form id="automationForm" onsubmit="saveAutomation(event)" novalidate>
+        <input type="hidden" id="automationId" />
+        <div class="form-group">
+          <label>Nome *</label>
+          <input type="text" id="automationName" required placeholder="Ex: Automação de Backup">
+        </div>
+
+        <div style="margin-top:20px">
+          <h3 style="color:var(--accent-2);margin-bottom:10px">Triggers</h3>
+          <button type="button" class="btn" onclick="openTriggerModal()">➕ Adicionar Trigger</button>
+          <div id="triggers-list" style="margin-top:10px"></div>
+        </div>
+
+        <div style="margin-top:20px">
+          <h3 style="color:var(--accent-2);margin-bottom:10px">Actions</h3>
+          <button type="button" class="btn" onclick="openActionModal()">➕ Adicionar Action</button>
+          <div id="actions-list" style="margin-top:10px"></div>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end">
+          <button type="submit" class="btn primary">💾 Salvar</button>
+          <button type="button" class="btn" onclick="closeAutomationModal()">✖ Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Trigger Modal -->
+  <div id="triggerModal" class="modal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <h2 id="triggerModalTitle">Novo Trigger</h2>
+      <form id="triggerForm" onsubmit="saveTrigger(event)" novalidate>
+        <input type="hidden" id="triggerId" />
+        <input type="hidden" id="triggerAutomationId" />
+
+        <div class="form-group">
+          <label>Tipo de Trigger *</label>
+          <select id="triggerType" required onchange="updateTriggerConfigFields()">
+            <option value="">-- Selecionar --</option>
+            <option value="SCHEDULE">Agendamento</option>
+            <option value="FILE_CREATED">Arquivo Criado</option>
+            <option value="FILE_MODIFIED">Arquivo Modificado</option>
+            <option value="PERIPHERAL_STATE">Estado do Periférico</option>
+            <option value="MANUAL">Manual</option>
+          </select>
+        </div>
+
+        <div id="triggerConfigFields" style="margin-top:10px"></div>
+
+        <div class="form-group">
+          <label>Configuração (JSON)</label>
+          <textarea id="triggerConfig" rows="4" placeholder='{"cron":"0 0 * * *"}'></textarea>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end">
+          <button type="submit" class="btn primary">💾 Salvar</button>
+          <button type="button" class="btn" onclick="closeTriggerModal()">✖ Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Action Modal -->
+  <div id="actionModal" class="modal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <h2 id="actionModalTitle">Nova Action</h2>
+      <form id="actionForm" onsubmit="saveAction(event)" novalidate>
+        <input type="hidden" id="actionId" />
+        <input type="hidden" id="actionAutomationId" />
+
+        <div class="form-group">
+          <label>Tipo de Action *</label>
+          <select id="actionType" required onchange="updateActionConfigFields()">
+            <option value="">-- Selecionar --</option>
+            <option value="UPLOAD_FILE">Upload de Arquivo</option>
+            <option value="DOWNLOAD_FILE">Download de Arquivo</option>
+            <option value="DELETE_FILE">Deletar Arquivo</option>
+            <option value="EXECUTE_COMMAND">Executar Comando</option>
+            <option value="SEND_NOTIFICATION">Enviar Notificação</option>
+          </select>
+        </div>
+
+        <div id="actionConfigFields" style="margin-top:10px"></div>
+
+        <div class="form-group">
+          <label>Configuração (JSON)</label>
+          <textarea id="actionConfig" rows="4" placeholder='{"source":"/path/to/file","destination":"/remote/path"}'></textarea>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end">
+          <button type="submit" class="btn primary">💾 Salvar</button>
+          <button type="button" class="btn" onclick="closeActionModal()">✖ Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
 <script>
 /* Minimal JS that preserves original hooks and IDs.
    Functions call the same endpoints used previously. */
@@ -450,6 +567,7 @@ function switchTab(e, name){
   const el = document.getElementById(name);
   if(el) el.style.display = 'block';
   if(name === 'peripherals') loadPeripherals();
+  if(name === 'automations') loadAutomations();
   if(name === 'history') loadOperations();
   if(name === 'config') loadConfig();
 }
@@ -902,6 +1020,434 @@ async function clearHistory(){
     alert('Erro ao limpar histórico');
   }
 }
+
+// ==================== AUTOMATION FUNCTIONS ====================
+
+async function loadAutomations() {
+  try {
+    const res = await fetch('/api/automations');
+    const automations = await res.json();
+    const list = document.getElementById('automations-list');
+
+    if (!automations || automations.length === 0) {
+      list.innerHTML = '<div class="empty-state">Nenhuma automação cadastrada</div>';
+      return;
+    }
+
+    let html = '<table><thead><tr><th>ID</th><th>Nome</th><th>Triggers</th><th>Actions</th><th>Criado em</th><th>Ações</th></tr></thead><tbody>';
+
+    for (const auto of automations) {
+      const triggers = await fetch(`/api/triggers?automation_id=${auto.id}`).then(r => r.json()).catch(() => []);
+      const actions = await fetch(`/api/actions?automation_id=${auto.id}`).then(r => r.json()).catch(() => []);
+
+      html += `<tr>
+        <td>${auto.id}</td>
+        <td>${escapeHtml(auto.name)}</td>
+        <td>${triggers.length}</td>
+        <td>${actions.length}</td>
+        <td>${auto.created_at || 'N/A'}</td>
+        <td style="text-align:right">
+          <div class="actions">
+            <button class="btn" onclick="editAutomation(${auto.id})">Editar</button>
+            <button class="btn" onclick="deleteAutomation(${auto.id})">Deletar</button>
+          </div>
+        </td>
+      </tr>`;
+    }
+
+    html += '</tbody></table>';
+    list.innerHTML = html;
+  } catch (e) {
+    console.error(e);
+    document.getElementById('automations-list').innerHTML = '<div class="empty-state">Erro ao carregar automações</div>';
+  }
+}
+
+function openAutomationModal() {
+  document.getElementById('automationModalTitle').textContent = 'Nova Automação';
+  document.getElementById('automationId').value = '';
+  document.getElementById('automationName').value = '';
+  document.getElementById('triggers-list').innerHTML = '';
+  document.getElementById('actions-list').innerHTML = '';
+  document.getElementById('automationModal').classList.add('active');
+}
+
+function closeAutomationModal() {
+  document.getElementById('automationModal').classList.remove('active');
+}
+
+async function editAutomation(id) {
+  try {
+    const res = await fetch(`/api/automations/${id}`);
+    const auto = await res.json();
+
+    document.getElementById('automationModalTitle').textContent = 'Editar Automação';
+    document.getElementById('automationId').value = auto.id;
+    document.getElementById('automationName').value = auto.name || '';
+
+    // Load triggers and actions
+    await loadTriggersForAutomation(auto.id);
+    await loadActionsForAutomation(auto.id);
+
+    document.getElementById('automationModal').classList.add('active');
+  } catch (e) {
+    console.error(e);
+    showAlert('error', 'Erro ao carregar automação');
+  }
+}
+
+async function saveAutomation(e) {
+  e.preventDefault();
+  const id = document.getElementById('automationId').value;
+  const name = document.getElementById('automationName').value;
+
+  const data = { name };
+  const method = id ? 'PUT' : 'POST';
+  const url = id ? `/api/automations/${id}` : '/api/automations';
+
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    const body = await res.json();
+
+    if (res.ok) {
+      showAlert('success', body.message || 'Automação salva');
+      closeAutomationModal();
+      loadAutomations();
+    } else {
+      showAlert('error', body.error || 'Erro ao salvar');
+    }
+  } catch (e) {
+    console.error(e);
+    showAlert('error', 'Erro ao salvar automação');
+  }
+}
+
+async function deleteAutomation(id) {
+  if (!confirm('Deseja deletar esta automação? Todos os triggers e actions serão deletados também.')) return;
+
+  try {
+    const res = await fetch(`/api/automations/${id}`, { method: 'DELETE' });
+    const body = await res.json();
+
+    if (res.ok) {
+      showAlert('success', body.message || 'Automação deletada');
+      loadAutomations();
+    } else {
+      showAlert('error', body.error || 'Erro ao deletar');
+    }
+  } catch (e) {
+    console.error(e);
+    showAlert('error', 'Erro ao deletar automação');
+  }
+}
+
+// ==================== TRIGGER FUNCTIONS ====================
+
+async function loadTriggersForAutomation(automationId) {
+  try {
+    const res = await fetch(`/api/triggers?automation_id=${automationId}`);
+    const triggers = await res.json();
+    const list = document.getElementById('triggers-list');
+
+    if (!triggers || triggers.length === 0) {
+      list.innerHTML = '<div style="color:var(--muted);font-size:0.9rem;padding:8px">Nenhum trigger cadastrado</div>';
+      return;
+    }
+
+    let html = '<table style="font-size:0.9rem"><thead><tr><th>ID</th><th>Tipo</th><th>Config</th><th>Ações</th></tr></thead><tbody>';
+
+    for (const trigger of triggers) {
+      html += `<tr>
+        <td>${trigger.id}</td>
+        <td>${escapeHtml(trigger.trigger_type)}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(JSON.stringify(trigger.trigger_config || {}))}</td>
+        <td style="text-align:right">
+          <div class="actions">
+            <button class="btn" style="padding:4px 8px;font-size:0.85rem" onclick="editTrigger(${trigger.id})">Editar</button>
+            <button class="btn" style="padding:4px 8px;font-size:0.85rem" onclick="deleteTrigger(${trigger.id})">Deletar</button>
+          </div>
+        </td>
+      </tr>`;
+    }
+
+    html += '</tbody></table>';
+    list.innerHTML = html;
+  } catch (e) {
+    console.error(e);
+    document.getElementById('triggers-list').innerHTML = '<div style="color:red">Erro ao carregar triggers</div>';
+  }
+}
+
+function openTriggerModal() {
+  const automationId = document.getElementById('automationId').value;
+  if (!automationId) {
+    showAlert('error', 'Salve a automação primeiro');
+    return;
+  }
+
+  document.getElementById('triggerModalTitle').textContent = 'Novo Trigger';
+  document.getElementById('triggerId').value = '';
+  document.getElementById('triggerAutomationId').value = automationId;
+  document.getElementById('triggerType').value = '';
+  document.getElementById('triggerConfig').value = '';
+  document.getElementById('triggerConfigFields').innerHTML = '';
+  document.getElementById('triggerModal').classList.add('active');
+}
+
+function closeTriggerModal() {
+  document.getElementById('triggerModal').classList.remove('active');
+}
+
+async function editTrigger(id) {
+  try {
+    const res = await fetch(`/api/triggers/${id}`);
+    const trigger = await res.json();
+
+    document.getElementById('triggerModalTitle').textContent = 'Editar Trigger';
+    document.getElementById('triggerId').value = trigger.id;
+    document.getElementById('triggerAutomationId').value = trigger.automation_id;
+    document.getElementById('triggerType').value = trigger.trigger_type || '';
+    document.getElementById('triggerConfig').value = prettyJson(trigger.trigger_config);
+
+    updateTriggerConfigFields();
+    document.getElementById('triggerModal').classList.add('active');
+  } catch (e) {
+    console.error(e);
+    showAlert('error', 'Erro ao carregar trigger');
+  }
+}
+
+async function saveTrigger(e) {
+  e.preventDefault();
+  const id = document.getElementById('triggerId').value;
+  const automationId = document.getElementById('triggerAutomationId').value;
+  const triggerType = document.getElementById('triggerType').value;
+  const triggerConfig = parseJsonField('triggerConfig');
+
+  const data = {
+    automation_id: parseInt(automationId),
+    trigger_type: triggerType,
+    trigger_config: triggerConfig
+  };
+
+  const method = id ? 'PUT' : 'POST';
+  const url = id ? `/api/triggers/${id}` : '/api/triggers';
+
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    const body = await res.json();
+
+    if (res.ok) {
+      showAlert('success', body.message || 'Trigger salvo');
+      closeTriggerModal();
+      loadTriggersForAutomation(automationId);
+    } else {
+      showAlert('error', body.error || 'Erro ao salvar');
+    }
+  } catch (e) {
+    console.error(e);
+    showAlert('error', 'Erro ao salvar trigger');
+  }
+}
+
+async function deleteTrigger(id) {
+  if (!confirm('Deseja deletar este trigger?')) return;
+
+  try {
+    const res = await fetch(`/api/triggers/${id}`, { method: 'DELETE' });
+    const body = await res.json();
+
+    if (res.ok) {
+      showAlert('success', body.message || 'Trigger deletado');
+      const automationId = document.getElementById('automationId').value;
+      if (automationId) loadTriggersForAutomation(automationId);
+    } else {
+      showAlert('error', body.error || 'Erro ao deletar');
+    }
+  } catch (e) {
+    console.error(e);
+    showAlert('error', 'Erro ao deletar trigger');
+  }
+}
+
+function updateTriggerConfigFields() {
+  const type = document.getElementById('triggerType').value;
+  const container = document.getElementById('triggerConfigFields');
+
+  // Add helpful fields based on trigger type
+  if (type === 'SCHEDULE') {
+    container.innerHTML = '<div class="form-group"><label>Cron Expression</label><input type="text" placeholder="0 0 * * *" id="triggerCron"></div>';
+  } else if (type === 'FILE_CREATED' || type === 'FILE_MODIFIED') {
+    container.innerHTML = '<div class="form-group"><label>Caminho do Arquivo</label><input type="text" placeholder="/path/to/watch" id="triggerPath"></div>';
+  } else if (type === 'PERIPHERAL_STATE') {
+    container.innerHTML = '<div class="form-group"><label>Peripheral ID</label><input type="number" id="triggerPeripheralId"></div>';
+  } else {
+    container.innerHTML = '';
+  }
+}
+
+// ==================== ACTION FUNCTIONS ====================
+
+async function loadActionsForAutomation(automationId) {
+  try {
+    const res = await fetch(`/api/actions?automation_id=${automationId}`);
+    const actions = await res.json();
+    const list = document.getElementById('actions-list');
+
+    if (!actions || actions.length === 0) {
+      list.innerHTML = '<div style="color:var(--muted);font-size:0.9rem;padding:8px">Nenhuma action cadastrada</div>';
+      return;
+    }
+
+    let html = '<table style="font-size:0.9rem"><thead><tr><th>ID</th><th>Tipo</th><th>Config</th><th>Ações</th></tr></thead><tbody>';
+
+    for (const action of actions) {
+      html += `<tr>
+        <td>${action.id}</td>
+        <td>${escapeHtml(action.action_type)}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(JSON.stringify(action.action_config || {}))}</td>
+        <td style="text-align:right">
+          <div class="actions">
+            <button class="btn" style="padding:4px 8px;font-size:0.85rem" onclick="editAction(${action.id})">Editar</button>
+            <button class="btn" style="padding:4px 8px;font-size:0.85rem" onclick="deleteAction(${action.id})">Deletar</button>
+          </div>
+        </td>
+      </tr>`;
+    }
+
+    html += '</tbody></table>';
+    list.innerHTML = html;
+  } catch (e) {
+    console.error(e);
+    document.getElementById('actions-list').innerHTML = '<div style="color:red">Erro ao carregar actions</div>';
+  }
+}
+
+function openActionModal() {
+  const automationId = document.getElementById('automationId').value;
+  if (!automationId) {
+    showAlert('error', 'Salve a automação primeiro');
+    return;
+  }
+
+  document.getElementById('actionModalTitle').textContent = 'Nova Action';
+  document.getElementById('actionId').value = '';
+  document.getElementById('actionAutomationId').value = automationId;
+  document.getElementById('actionType').value = '';
+  document.getElementById('actionConfig').value = '';
+  document.getElementById('actionConfigFields').innerHTML = '';
+  document.getElementById('actionModal').classList.add('active');
+}
+
+function closeActionModal() {
+  document.getElementById('actionModal').classList.remove('active');
+}
+
+async function editAction(id) {
+  try {
+    const res = await fetch(`/api/actions/${id}`);
+    const action = await res.json();
+
+    document.getElementById('actionModalTitle').textContent = 'Editar Action';
+    document.getElementById('actionId').value = action.id;
+    document.getElementById('actionAutomationId').value = action.automation_id;
+    document.getElementById('actionType').value = action.action_type || '';
+    document.getElementById('actionConfig').value = prettyJson(action.action_config);
+
+    updateActionConfigFields();
+    document.getElementById('actionModal').classList.add('active');
+  } catch (e) {
+    console.error(e);
+    showAlert('error', 'Erro ao carregar action');
+  }
+}
+
+async function saveAction(e) {
+  e.preventDefault();
+  const id = document.getElementById('actionId').value;
+  const automationId = document.getElementById('actionAutomationId').value;
+  const actionType = document.getElementById('actionType').value;
+  const actionConfig = parseJsonField('actionConfig');
+
+  const data = {
+    automation_id: parseInt(automationId),
+    action_type: actionType,
+    action_config: actionConfig
+  };
+
+  const method = id ? 'PUT' : 'POST';
+  const url = id ? `/api/actions/${id}` : '/api/actions';
+
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    const body = await res.json();
+
+    if (res.ok) {
+      showAlert('success', body.message || 'Action salva');
+      closeActionModal();
+      loadActionsForAutomation(automationId);
+    } else {
+      showAlert('error', body.error || 'Erro ao salvar');
+    }
+  } catch (e) {
+    console.error(e);
+    showAlert('error', 'Erro ao salvar action');
+  }
+}
+
+async function deleteAction(id) {
+  if (!confirm('Deseja deletar esta action?')) return;
+
+  try {
+    const res = await fetch(`/api/actions/${id}`, { method: 'DELETE' });
+    const body = await res.json();
+
+    if (res.ok) {
+      showAlert('success', body.message || 'Action deletada');
+      const automationId = document.getElementById('automationId').value;
+      if (automationId) loadActionsForAutomation(automationId);
+    } else {
+      showAlert('error', body.error || 'Erro ao deletar');
+    }
+  } catch (e) {
+    console.error(e);
+    showAlert('error', 'Erro ao deletar action');
+  }
+}
+
+function updateActionConfigFields() {
+  const type = document.getElementById('actionType').value;
+  const container = document.getElementById('actionConfigFields');
+
+  // Add helpful fields based on action type
+  if (type === 'UPLOAD_FILE' || type === 'DOWNLOAD_FILE') {
+    container.innerHTML = `
+      <div class="form-group"><label>Source Path</label><input type="text" placeholder="/local/path" id="actionSource"></div>
+      <div class="form-group"><label>Destination Path</label><input type="text" placeholder="/remote/path" id="actionDestination"></div>
+    `;
+  } else if (type === 'DELETE_FILE') {
+    container.innerHTML = '<div class="form-group"><label>File Path</label><input type="text" placeholder="/path/to/file" id="actionFilePath"></div>';
+  } else if (type === 'EXECUTE_COMMAND') {
+    container.innerHTML = '<div class="form-group"><label>Command</label><input type="text" placeholder="ls -la" id="actionCommand"></div>';
+  } else if (type === 'SEND_NOTIFICATION') {
+    container.innerHTML = '<div class="form-group"><label>Message</label><textarea id="actionMessage" rows="3"></textarea></div>';
+  } else {
+    container.innerHTML = '';
+  }
+}
+
 </script>
 </body>
 </html>

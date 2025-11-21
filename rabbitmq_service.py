@@ -65,7 +65,9 @@ class RabbitMQService:
                 host=self.rabbitmq_config['host'],
                 port=self.rabbitmq_config['port'],
                 credentials=credentials,
-                heartbeat=600
+                heartbeat=30,  # Reduzido de 600 para 30 segundos
+                blocked_connection_timeout=10,  # Timeout para conexões bloqueadas
+                socket_timeout=5  # Timeout para operações de socket
             )
 
             self.connection = pika.BlockingConnection(parameters)
@@ -187,15 +189,35 @@ class RabbitMQService:
 
                 logger.info("Serviço RabbitMQ iniciado. Aguardando mensagens...")
 
-                self.channel.start_consuming()
+                # Use um loop manual em vez de start_consuming() para permitir interrupção mais rápida
+                for method_frame, properties, body in self.channel.consume(inactivity_timeout=1):
+                    if not self.running:
+                        logger.info("Serviço foi sinalizado para parar, encerrando consumo...")
+                        break
+
+                    if method_frame is None:
+                        # Timeout de inatividade - continue o loop para verificar self.running
+                        continue
+
+                    # Processar mensagem
+                    try:
+                        # Aqui você pode processar a mensagem se necessário
+                        # Por enquanto, apenas confirmamos
+                        self.channel.basic_ack(method_frame.delivery_tag)
+                    except Exception as e:
+                        logger.error(f"Erro ao processar mensagem: {e}")
+                        self.channel.basic_nack(method_frame.delivery_tag)
+
             except KeyboardInterrupt:
+                logger.info("KeyboardInterrupt recebido, parando serviço...")
                 self.stop()
             except ValueError as ve:
                 logger.error(f"Erro de configuração: {ve}")
                 self.stop()
             except Exception as e:
                 logger.error(f"Erro no serviço RabbitMQ: {e}")
-                self.reconnect()
+                if self.running:
+                    self.reconnect()
             finally:
                 if not self.running:
                     break
@@ -233,9 +255,27 @@ class RabbitMQService:
 
     def stop(self):
         """Para o serviço"""
+        logger.info("Parando serviço RabbitMQ...")
         self.running = False
-        if self.channel:
-            self.channel.stop_consuming()
-        if self.connection:
-            self.connection.close()
+
+        try:
+            if self.channel:
+                try:
+                    logger.info("Parando consumo de mensagens...")
+                    self.channel.stop_consuming()
+                except Exception as e:
+                    logger.warning(f"Erro ao parar consumo: {e}")
+        except Exception as e:
+            logger.error(f"Erro ao acessar channel durante stop: {e}")
+
+        try:
+            if self.connection and self.connection.is_open:
+                try:
+                    logger.info("Fechando conexão RabbitMQ...")
+                    self.connection.close()
+                except Exception as e:
+                    logger.warning(f"Erro ao fechar conexão: {e}")
+        except Exception as e:
+            logger.error(f"Erro ao acessar connection durante stop: {e}")
+
         logger.info("Serviço RabbitMQ parado")

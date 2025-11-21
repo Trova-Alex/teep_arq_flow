@@ -22,18 +22,24 @@ command_queue = Queue()
 
 def signal_handler(signum, frame):
     """Manipula sinais do sistema"""
-    logger.info(f"Sinal recebido: {signum}")
+    logger.info(f"Sinal recebido: {signum}. Iniciando shutdown...")
+
     if rabbitmq_service:
         try:
+            logger.info("Parando serviço RabbitMQ...")
             rabbitmq_service.stop()
         except Exception as e:
             logger.error(f"Erro ao parar o serviço rabbitmq: {e}")
+
     if web_service:
         try:
+            logger.info("Parando serviço web...")
             web_service.stop()
         except Exception as e:
             logger.error(f"Erro ao parar o serviço web: {e}")
+
     stop_event.set()
+    logger.info("Evento de parada ativado")
 
 
 def main():
@@ -62,9 +68,24 @@ def main():
     # Wait until signal_handler sets the event
     stop_event.wait()
 
-    # Give the thread a moment to stop, then ensure logging is flushed
-    web_thread.join(timeout=5)
-    rabbitmq_thread.join(timeout=5)
+    # Give the threads time to stop gracefully
+    logger.info("Aguardando threads finalizarem...")
+
+    logger.info("Aguardando thread web...")
+    web_thread.join(timeout=10)
+    if web_thread.is_alive():
+        logger.warning("Thread web não terminou dentro do timeout")
+    else:
+        logger.info("Thread web finalizada")
+
+    logger.info("Aguardando thread RabbitMQ...")
+    rabbitmq_thread.join(timeout=10)
+    if rabbitmq_thread.is_alive():
+        logger.warning("Thread RabbitMQ não terminou dentro do timeout")
+    else:
+        logger.info("Thread RabbitMQ finalizada")
+
+    logger.info("Finalizando logging...")
     logging.shutdown()
 
 

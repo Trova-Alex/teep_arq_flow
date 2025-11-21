@@ -101,6 +101,76 @@ class ConfigManager:
                        )
                        ''')
 
+        # Tabela de automações
+        cursor.execute('''
+                       CREATE TABLE IF NOT EXISTS automation
+                       (
+                           id
+                           INTEGER
+                           PRIMARY
+                           KEY
+                           AUTOINCREMENT,
+                           name
+                           TEXT
+                           NOT
+                           NULL,
+                           created_at
+                           TIMESTAMP
+                           DEFAULT
+                           CURRENT_TIMESTAMP
+                       )
+                       ''')
+
+        # Tabela de triggers
+        cursor.execute('''
+                       CREATE TABLE IF NOT EXISTS trigger
+                       (
+                           id
+                           INTEGER
+                           PRIMARY
+                           KEY
+                           AUTOINCREMENT,
+                           automation_id
+                           INTEGER
+                           NOT
+                           NULL,
+                           trigger_type
+                           TEXT,
+                           trigger_config
+                           TEXT,
+                           created_at
+                           TIMESTAMP
+                           DEFAULT
+                           CURRENT_TIMESTAMP,
+                           FOREIGN KEY (automation_id) REFERENCES automation(id) ON DELETE CASCADE
+                       )
+                       ''')
+
+        # Tabela de actions
+        cursor.execute('''
+                       CREATE TABLE IF NOT EXISTS action
+                       (
+                           id
+                           INTEGER
+                           PRIMARY
+                           KEY
+                           AUTOINCREMENT,
+                           automation_id
+                           INTEGER
+                           NOT
+                           NULL,
+                           action_type
+                           TEXT,
+                           action_config
+                           TEXT,
+                           created_at
+                           TIMESTAMP
+                           DEFAULT
+                           CURRENT_TIMESTAMP,
+                           FOREIGN KEY (automation_id) REFERENCES automation(id) ON DELETE CASCADE
+                       )
+                       ''')
+
         conn.commit()
         conn.close()
         logger.info("Banco de dados inicializado")
@@ -288,3 +358,246 @@ class ConfigManager:
         conn.commit()
         conn.close()
         logger.info(f"Peripheral id={peripheral_id} deleted")
+
+    # ========== CRUD para Automation ==========
+
+    def get_automations(self) -> List[Dict]:
+        """Return all automations"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM automation ORDER BY name')
+        results = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return results
+
+    def get_automation(self, automation_id: int) -> Optional[Dict]:
+        """Return a single automation by id"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM automation WHERE id = ?', (automation_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            return None
+        return dict(row)
+
+    def create_automation(self, name: str) -> int:
+        """Create a new automation and return its id"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+                       INSERT INTO automation (name)
+                       VALUES (?)
+                       ''', (name,))
+        aid = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        logger.info(f"Automation '{name}' created (id={aid})")
+        return aid
+
+    def update_automation(self, automation_id: int, name: str):
+        """Update an existing automation"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('UPDATE automation SET name = ? WHERE id = ?', (name, automation_id))
+        conn.commit()
+        conn.close()
+        logger.info(f"Automation id={automation_id} updated")
+
+    def delete_automation(self, automation_id: int):
+        """Delete an automation (cascades to triggers and actions)"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM automation WHERE id = ?', (automation_id,))
+        conn.commit()
+        conn.close()
+        logger.info(f"Automation id={automation_id} deleted")
+
+    # ========== CRUD para Trigger ==========
+
+    def get_triggers(self, automation_id: Optional[int] = None) -> List[Dict]:
+        """Return all triggers, optionally filtered by automation_id"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        if automation_id is not None:
+            cursor.execute('SELECT * FROM trigger WHERE automation_id = ? ORDER BY id', (automation_id,))
+        else:
+            cursor.execute('SELECT * FROM trigger ORDER BY automation_id, id')
+        results = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        # parse JSON fields
+        for r in results:
+            if r.get('trigger_config'):
+                try:
+                    r['trigger_config'] = json.loads(r['trigger_config'])
+                except Exception:
+                    pass
+        return results
+
+    def get_trigger(self, trigger_id: int) -> Optional[Dict]:
+        """Return a single trigger by id"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM trigger WHERE id = ?', (trigger_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            return None
+        result = dict(row)
+        if result.get('trigger_config'):
+            try:
+                result['trigger_config'] = json.loads(result['trigger_config'])
+            except Exception:
+                pass
+        return result
+
+    def create_trigger(self,
+                      automation_id: int,
+                      trigger_type: str,
+                      trigger_config: Any = None) -> int:
+        """Create a new trigger and return its id"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        t_config = json.dumps(trigger_config) if trigger_config is not None and not isinstance(
+            trigger_config, str) else trigger_config
+        cursor.execute('''
+                       INSERT INTO trigger (automation_id, trigger_type, trigger_config)
+                       VALUES (?, ?, ?)
+                       ''', (automation_id, trigger_type, t_config))
+        tid = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        logger.info(f"Trigger created (id={tid}) for automation_id={automation_id}")
+        return tid
+
+    def update_trigger(self,
+                      trigger_id: int,
+                      trigger_type: Optional[str] = None,
+                      trigger_config: Any = None):
+        """Update an existing trigger"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        fields = []
+        params = []
+        if trigger_type is not None:
+            fields.append("trigger_type = ?")
+            params.append(trigger_type)
+        if trigger_config is not None:
+            t_config = json.dumps(trigger_config) if not isinstance(trigger_config, str) else trigger_config
+            fields.append("trigger_config = ?")
+            params.append(t_config)
+
+        if fields:
+            sql = f"UPDATE trigger SET {', '.join(fields)} WHERE id = ?"
+            params.append(trigger_id)
+            cursor.execute(sql, tuple(params))
+            conn.commit()
+        conn.close()
+        logger.info(f"Trigger id={trigger_id} updated")
+
+    def delete_trigger(self, trigger_id: int):
+        """Delete a trigger"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM trigger WHERE id = ?', (trigger_id,))
+        conn.commit()
+        conn.close()
+        logger.info(f"Trigger id={trigger_id} deleted")
+
+    # ========== CRUD para Action ==========
+
+    def get_actions(self, automation_id: Optional[int] = None) -> List[Dict]:
+        """Return all actions, optionally filtered by automation_id"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        if automation_id is not None:
+            cursor.execute('SELECT * FROM action WHERE automation_id = ? ORDER BY id', (automation_id,))
+        else:
+            cursor.execute('SELECT * FROM action ORDER BY automation_id, id')
+        results = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        # parse JSON fields
+        for r in results:
+            if r.get('action_config'):
+                try:
+                    r['action_config'] = json.loads(r['action_config'])
+                except Exception:
+                    pass
+        return results
+
+    def get_action(self, action_id: int) -> Optional[Dict]:
+        """Return a single action by id"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM action WHERE id = ?', (action_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            return None
+        result = dict(row)
+        if result.get('action_config'):
+            try:
+                result['action_config'] = json.loads(result['action_config'])
+            except Exception:
+                pass
+        return result
+
+    def create_action(self,
+                     automation_id: int,
+                     action_type: str,
+                     action_config: Any = None) -> int:
+        """Create a new action and return its id"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        a_config = json.dumps(action_config) if action_config is not None and not isinstance(
+            action_config, str) else action_config
+        cursor.execute('''
+                       INSERT INTO action (automation_id, action_type, action_config)
+                       VALUES (?, ?, ?)
+                       ''', (automation_id, action_type, a_config))
+        aid = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        logger.info(f"Action created (id={aid}) for automation_id={automation_id}")
+        return aid
+
+    def update_action(self,
+                     action_id: int,
+                     action_type: Optional[str] = None,
+                     action_config: Any = None):
+        """Update an existing action"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        fields = []
+        params = []
+        if action_type is not None:
+            fields.append("action_type = ?")
+            params.append(action_type)
+        if action_config is not None:
+            a_config = json.dumps(action_config) if not isinstance(action_config, str) else action_config
+            fields.append("action_config = ?")
+            params.append(a_config)
+
+        if fields:
+            sql = f"UPDATE action SET {', '.join(fields)} WHERE id = ?"
+            params.append(action_id)
+            cursor.execute(sql, tuple(params))
+            conn.commit()
+        conn.close()
+        logger.info(f"Action id={action_id} updated")
+
+    def delete_action(self, action_id: int):
+        """Delete an action"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM action WHERE id = ?', (action_id,))
+        conn.commit()
+        conn.close()
+        logger.info(f"Action id={action_id} deleted")
+

@@ -179,6 +179,155 @@ class FlaskWebApp:
                 logger.exception("activate_debug failed for index %s: %s", index, e)
                 return jsonify({'error': str(e)}), 400
 
+        # ========== Automation routes ==========
+        @self.app.route('/api/automations', methods=['GET'])
+        def get_automations():
+            automations = self.config_manager.get_automations()
+            return jsonify(automations)
+
+        @self.app.route('/api/automations/<int:automation_id>', methods=['GET'])
+        def get_automation(automation_id):
+            automation = self.config_manager.get_automation(automation_id)
+            if automation:
+                return jsonify(automation)
+            return jsonify({'error': 'Automation not found'}), 404
+
+        @self.app.route('/api/automations', methods=['POST'])
+        def create_automation():
+            data = request.get_json() or {}
+            name = data.get('name')
+            if not name:
+                return jsonify({'error': 'Field "name" is required'}), 400
+            try:
+                aid = self.config_manager.create_automation(name=name)
+                return jsonify({'id': aid, 'message': 'Automation created'}), 201
+            except Exception as e:
+                return jsonify({'error': str(e)}), 400
+
+        @self.app.route('/api/automations/<int:automation_id>', methods=['PUT'])
+        def update_automation(automation_id):
+            data = request.get_json() or {}
+            name = data.get('name')
+            if not name:
+                return jsonify({'error': 'Field "name" is required'}), 400
+            try:
+                self.config_manager.update_automation(automation_id=automation_id, name=name)
+                return jsonify({'message': 'Automation updated'})
+            except Exception as e:
+                return jsonify({'error': str(e)}), 400
+
+        @self.app.route('/api/automations/<int:automation_id>', methods=['DELETE'])
+        def delete_automation(automation_id):
+            try:
+                self.config_manager.delete_automation(automation_id)
+                return jsonify({'message': 'Automation deleted'})
+            except Exception as e:
+                return jsonify({'error': str(e)}), 400
+
+        # ========== Trigger routes ==========
+        @self.app.route('/api/triggers', methods=['GET'])
+        def get_triggers():
+            automation_id = request.args.get('automation_id', type=int)
+            triggers = self.config_manager.get_triggers(automation_id=automation_id)
+            return jsonify(triggers)
+
+        @self.app.route('/api/triggers/<int:trigger_id>', methods=['GET'])
+        def get_trigger(trigger_id):
+            trigger = self.config_manager.get_trigger(trigger_id)
+            if trigger:
+                return jsonify(trigger)
+            return jsonify({'error': 'Trigger not found'}), 404
+
+        @self.app.route('/api/triggers', methods=['POST'])
+        def create_trigger():
+            data = request.get_json() or {}
+            automation_id = data.get('automation_id')
+            trigger_type = data.get('trigger_type')
+            if not automation_id or not trigger_type:
+                return jsonify({'error': 'Fields "automation_id" and "trigger_type" are required'}), 400
+            try:
+                tid = self.config_manager.create_trigger(
+                    automation_id=automation_id,
+                    trigger_type=trigger_type,
+                    trigger_config=data.get('trigger_config')
+                )
+                return jsonify({'id': tid, 'message': 'Trigger created'}), 201
+            except Exception as e:
+                return jsonify({'error': str(e)}), 400
+
+        @self.app.route('/api/triggers/<int:trigger_id>', methods=['PUT'])
+        def update_trigger(trigger_id):
+            data = request.get_json() or {}
+            try:
+                self.config_manager.update_trigger(
+                    trigger_id=trigger_id,
+                    trigger_type=data.get('trigger_type'),
+                    trigger_config=data.get('trigger_config')
+                )
+                return jsonify({'message': 'Trigger updated'})
+            except Exception as e:
+                return jsonify({'error': str(e)}), 400
+
+        @self.app.route('/api/triggers/<int:trigger_id>', methods=['DELETE'])
+        def delete_trigger(trigger_id):
+            try:
+                self.config_manager.delete_trigger(trigger_id)
+                return jsonify({'message': 'Trigger deleted'})
+            except Exception as e:
+                return jsonify({'error': str(e)}), 400
+
+        # ========== Action routes ==========
+        @self.app.route('/api/actions', methods=['GET'])
+        def get_actions():
+            automation_id = request.args.get('automation_id', type=int)
+            actions = self.config_manager.get_actions(automation_id=automation_id)
+            return jsonify(actions)
+
+        @self.app.route('/api/actions/<int:action_id>', methods=['GET'])
+        def get_action(action_id):
+            action = self.config_manager.get_action(action_id)
+            if action:
+                return jsonify(action)
+            return jsonify({'error': 'Action not found'}), 404
+
+        @self.app.route('/api/actions', methods=['POST'])
+        def create_action():
+            data = request.get_json() or {}
+            automation_id = data.get('automation_id')
+            action_type = data.get('action_type')
+            if not automation_id or not action_type:
+                return jsonify({'error': 'Fields "automation_id" and "action_type" are required'}), 400
+            try:
+                aid = self.config_manager.create_action(
+                    automation_id=automation_id,
+                    action_type=action_type,
+                    action_config=data.get('action_config')
+                )
+                return jsonify({'id': aid, 'message': 'Action created'}), 201
+            except Exception as e:
+                return jsonify({'error': str(e)}), 400
+
+        @self.app.route('/api/actions/<int:action_id>', methods=['PUT'])
+        def update_action(action_id):
+            data = request.get_json() or {}
+            try:
+                self.config_manager.update_action(
+                    action_id=action_id,
+                    action_type=data.get('action_type'),
+                    action_config=data.get('action_config')
+                )
+                return jsonify({'message': 'Action updated'})
+            except Exception as e:
+                return jsonify({'error': str(e)}), 400
+
+        @self.app.route('/api/actions/<int:action_id>', methods=['DELETE'])
+        def delete_action(action_id):
+            try:
+                self.config_manager.delete_action(action_id)
+                return jsonify({'message': 'Action deleted'})
+            except Exception as e:
+                return jsonify({'error': str(e)}), 400
+
     def start(self):
         """Inicia o servidor web"""
         self.server = make_server('0.0.0.0', self.port, self.app)
